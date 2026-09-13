@@ -740,7 +740,7 @@ async def endpoint_items(request):
     # parent-studio tags get ids too for symmetry (harmless, small extra
     # payload). The scene's own top-level `tags { name id }` is the one
     # actually consumed by GenreItems.
-    scene_fields = "id title code date details play_count resume_time last_played_at files { path basename duration size video_codec audio_codec width height frame_rate bit_rate } studio { id name tags { name id } parent_studio { id name tags { name id } } } tags { name id } performers { name id image_path } captions { language_code caption_type } stash_ids { stash_id }"
+    scene_fields = "id title code date details play_count resume_time last_played_at files { id path basename duration size video_codec audio_codec width height frame_rate bit_rate } studio { id name tags { name id } parent_studio { id name tags { name id } } } tags { name id } performers { name id image_path } captions { language_code caption_type } stash_ids { stash_id }"
 
     if ids:
         # Specific items requested
@@ -2587,7 +2587,7 @@ async def endpoint_item_details(request):
     # parent-studio tags get ids too for symmetry (harmless, small extra
     # payload). The scene's own top-level `tags { name id }` is the one
     # actually consumed by GenreItems.
-    scene_fields = "id title code date details play_count resume_time last_played_at files { path basename duration size video_codec audio_codec width height frame_rate bit_rate } studio { id name tags { name id } parent_studio { id name tags { name id } } } tags { name id } performers { name id image_path } captions { language_code caption_type } stash_ids { stash_id }"
+    scene_fields = "id title code date details play_count resume_time last_played_at files { id path basename duration size video_codec audio_codec width height frame_rate bit_rate } studio { id name tags { name id } parent_studio { id name tags { name id } } } tags { name id } performers { name id image_path } captions { language_code caption_type } stash_ids { stash_id }"
 
     # Handle special folder IDs - return the folder ITSELF (not children)
 

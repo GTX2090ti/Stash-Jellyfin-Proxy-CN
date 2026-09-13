@@ -12,6 +12,8 @@ import os
 
 from starlette.responses import JSONResponse
 
+from stash_jellyfin_proxy import runtime
+from stash_jellyfin_proxy.mapping.scene import build_media_source, version_display_name
 from stash_jellyfin_proxy.stash.client import stash_query
 
 logger = logging.getLogger("stash-jellyfin-proxy")
@@ -54,7 +56,7 @@ async def endpoint_playback_info(request):
         """query FindScene($id: ID!) {
             findScene(id: $id) {
                 id title
-                files { path basename duration size video_codec audio_codec width height frame_rate bit_rate }
+                files { id path basename duration size video_codec audio_codec width height frame_rate bit_rate }
                 captions { language_code caption_type }
             }
         }""",
@@ -176,7 +178,28 @@ async def endpoint_playback_info(request):
         "DefaultSubtitleStreamIndex": -1,
     }
 
+    sources = [media_source]
+
+    # Multi-file scene (Stash "Merge"): advertise every file as its own
+    # MediaSource so the client renders a version picker. Sources after the
+    # first carry a `-f<fileId>` id that endpoints/stream.py resolves.
+    if runtime.MULTI_FILE_SCENES and len(files) > 1:
+        for extra in files[1:]:
+            extra_file_id = extra.get("id")
+            if not extra_file_id:
+                continue
+            sources.append(
+                build_media_source(
+                    file_data=extra,
+                    media_source_id=f"{item_id}-f{extra_file_id}",
+                    title=version_display_name(
+                        extra,
+                        os.path.basename(extra.get("path") or "") or (scene.get("title") or item_id),
+                    ),
+                )
+            )
+
     return JSONResponse({
-        "MediaSources": [media_source],
+        "MediaSources": sources,
         "PlaySessionId": f"session-{item_id}",
     })

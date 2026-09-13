@@ -54,6 +54,27 @@ BANNER_MODE: str = "recent"
 BANNER_POOL_SIZE: int = 200
 BANNER_TAGS: List[str] = []
 
+# --- Multi-file scenes (Stash "Merge" results) ---
+# Stash streams only a scene's PRIMARY file — see util/local_media.py for
+# the full explanation. When True, a scene holding more than one video
+# file is exposed as a single Jellyfin item carrying one MediaSource per
+# file, so clients render a version picker instead of silently playing
+# only files[0]. Requires the media library to be mounted into this
+# container plus a LIBRARY_PATH_MAP; without either, non-primary files
+# fall back to the Stash stream (which serves the primary file).
+MULTI_FILE_SCENES: bool = False
+# Comma-separated `stash_path:container_path` mappings, e.g.
+# "/data:/library". Empty disables direct disk reads.
+LIBRARY_PATH_MAP: str = ""
+
+# --- Config UI language ---
+# Server-side default for the configuration UI. "auto" lets each browser
+# decide from its Accept-Language/navigator.language; "en" and "zh" pin
+# it. This is only a *default* — the sidebar switcher stores a per-browser
+# override in localStorage, which always wins so one operator can read the
+# UI in a language other than the deployment default.
+UI_LANGUAGE: str = "auto"
+
 # --- Feature toggles ---
 ENABLE_FILTERS: bool = True
 ENABLE_IMAGE_RESIZE: bool = True

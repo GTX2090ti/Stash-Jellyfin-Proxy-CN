@@ -1,10 +1,15 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{HTML_LANG}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{SERVER_NAME}}</title>
     <link rel="stylesheet" href="/static/app.css?v={{ASSET_V}}">
+    <!-- Language bootstrap. The inline assignment must precede i18n.js so the
+         server default is visible to it, and i18n.js must precede app.js so
+         the catalog is loaded before the first dynamic render. -->
+    <script>window.SJP_DEFAULT_LANG = "{{UI_LANG}}";</script>
+    <script src="/static/i18n.js?v={{ASSET_V}}"></script>
 </head>
 <body>
 
@@ -26,6 +31,14 @@
       <div class="nav-item" data-page="logs"><span class="dot"></span>Logs</div>
     </nav>
     <div class="sidebar-footer">
+      <!-- Language switcher. The chip labels are deliberately NOT in the
+           translation catalog: a language picker should read the same in
+           every language. Only the tooltips are translated. -->
+      <div class="lang-switch" id="lang-switch" role="group" aria-label="Language">
+        <button type="button" class="lang-opt" data-lang="auto" title="Follow browser / server default">AUTO</button>
+        <button type="button" class="lang-opt" data-lang="zh" title="Switch to Chinese">中文</button>
+        <button type="button" class="lang-opt" data-lang="en" title="Switch to English">EN</button>
+      </div>
       <div class="status-line"><span class="status-dot on" id="sidebar-proxy-dot"></span><span id="sidebar-proxy-label">Proxy</span></div>
       <div class="status-line"><span class="status-dot ok" id="sidebar-stash-dot"></span><span id="sidebar-stash-label">Stash</span></div>
       <div class="status-line" style="margin-top: 6px; color: var(--text-faint); font-size: 11.5px;" id="sidebar-uptime">Uptime: —</div>
@@ -391,7 +404,7 @@
           <div class="card-body">
             <div class="field">
               <div class="field-label">Playlist Parent Tag</div>
-              <input type="text" data-key="PLAYLIST_PARENT_TAG" placeholder="Playlists">
+              <input type="text" data-key="PLAYLIST_PARENT_TAG" data-i18n-skip-attrs placeholder="Playlists">
               <div class="field-help">Stash tag whose direct children represent Jellyfin playlists. Each child tag becomes one playlist; the scenes carrying that child tag are its items. Created on first playlist creation. Leave blank to disable.</div>
             </div>
           </div>
@@ -771,6 +784,30 @@
         <div class="page-subtitle">Server identity, performance, logging, security, server control</div>
       </div>
       <div class="page-content" id="system-content">
+
+        <!-- Interface -->
+        <div class="card" data-section="interface">
+          <div class="card-header">
+            <div class="card-title">Interface <span class="unsaved-dot hide"></span></div>
+          </div>
+          <div class="card-body">
+            <div class="field">
+              <div class="field-label">Interface Language</div>
+              <select data-key="UI_LANGUAGE">
+                <option value="auto">Automatic (browser)</option>
+                <option value="en">English</option>
+                <option value="zh">简体中文</option>
+              </select>
+              <div class="field-help">Language used by this configuration UI. "Automatic" follows the browser and falls back to English.</div>
+            </div>
+          </div>
+          <div class="card-footer">
+            <span class="save-badge live" title="Server-side default. Every browser can override it with the switcher in the sidebar.">
+              <span class="sb-dot"></span>Live
+            </span>
+            <button class="btn primary" data-save="interface">Save</button>
+          </div>
+        </div>
 
         <!-- Server Identity -->
         <div class="card" data-section="identity">

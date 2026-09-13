@@ -36,8 +36,21 @@ async def ui_index(request):
     # query string changing per boot forces a fresh fetch after any upgrade
     # or dev iteration.
     asset_v = f"{__version__}-{int(runtime.PROXY_START_TIME or 0)}"
+
+    # Server default language, injected so the first paint is already in the
+    # right language instead of flipping after app.js boots. The value is
+    # clamped to a fixed vocabulary before interpolation, which is what makes
+    # replacing it into the <html lang> attribute safe — unlike SERVER_NAME
+    # it never carries operator-controlled text.
+    ui_lang = getattr(runtime, "UI_LANGUAGE", "auto")
+    if ui_lang not in ("auto", "en", "zh"):
+        ui_lang = "auto"
+    html_lang = {"zh": "zh-CN", "en": "en"}.get(ui_lang, "en")
+
     html = (_WEB_UI_HTML
             .replace("{{SERVER_NAME}}", runtime.SERVER_NAME)
+            .replace("{{UI_LANG}}", ui_lang)
+            .replace("{{HTML_LANG}}", html_lang)
             .replace("{{ASSET_V}}", asset_v))
     return Response(html, media_type="text/html")
 
@@ -66,6 +79,10 @@ async def ui_api_status(request):
         # see exactly what to type into Infuse/Swiftfin/SenPlayer.
         "sjsUser": runtime.SJS_USER,
         "sjsPassword": runtime.SJS_PASSWORD,
+        # Server default for the config-UI language. The front end prefers
+        # its own localStorage override when the operator has used the
+        # sidebar switcher; this value is the fallback.
+        "uiLanguage": runtime.UI_LANGUAGE,
         "migrationPerformed": bool(getattr(runtime, "MIGRATION_PERFORMED", False)),
         "migrationLog": list(getattr(runtime, "MIGRATION_LOG", []) or []),
         "configWritable": bool(getattr(runtime, "CONFIG_WRITABLE", True)),
@@ -522,6 +539,11 @@ from stash_jellyfin_proxy.config.helpers import normalize_path
 # pre-P5B key. This table extends that with P5B pass 4-6 keys (Libraries,
 # Playback, Search) without duplicating boilerplate.
 _P5B_KEYS = [
+    # --- Appearance ---
+    # Server-side default language for the config UI. "auto" defers to
+    # each browser; the per-browser switcher override lives in
+    # localStorage and is not represented here.
+    ("UI_LANGUAGE",           "UI_LANGUAGE",           "str",  "auto",       True),
     # --- Connection ---
     ("PUBLIC_URL",            "PUBLIC_URL",            "str",  "",           True),
     # --- Libraries (pass 4) ---

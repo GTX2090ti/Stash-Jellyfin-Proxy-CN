@@ -21,7 +21,7 @@ logger = logging.getLogger("stash-jellyfin-proxy")
 
 _SCENE_FIELDS = (
     "id title code date details play_count resume_time last_played_at "
-    "files { path basename duration size video_codec audio_codec width height frame_rate bit_rate } "
+    "files { id path basename duration size video_codec audio_codec width height frame_rate bit_rate } "
     "studio { id name tags { name } parent_studio { id name tags { name } } } "
     "tags { name } performers { name id image_path } "
     "captions { language_code caption_type } "
@@ -232,21 +232,21 @@ async def endpoint_user_views(request):
     sidebar/top-level entries in every client."""
     counts = await _library_counts()
     items = [
-        _make_library("Scenes",     "root-scenes",     "movies", counts.get("root-scenes", 0)),
-        _make_library("Studios",    "root-studios",    "movies", counts.get("root-studios", 0)),
-        _make_library("Performers", "root-performers", "movies", counts.get("root-performers", 0)),
-        _make_library("Groups",     "root-groups",     "movies", counts.get("root-groups", 0)),
+        _make_library("场景",     "root-scenes",     "movies", counts.get("root-scenes", 0)),
+        _make_library("厂商",    "root-studios",    "movies", counts.get("root-studios", 0)),
+        _make_library("演员", "root-performers", "movies", counts.get("root-performers", 0)),
+        _make_library("分组",     "root-groups",     "movies", counts.get("root-groups", 0)),
     ]
     # Series library: appears only when at least one studio has SERIES_TAG.
     # Swiftfin gets tvshows for native Series nav; Infuse/SenPlayer get movies
     # (their tvshows renderer shows a blank/unnamed folder).
     if await _has_series_studios():
         series_count = await _series_count()
-        items.append(_make_library("Series", "root-series", _series_collection_type(request), series_count))
+        items.append(_make_library("系列", "root-series", _series_collection_type(request), series_count))
     if await _has_playlists():
-        items.append(_make_library("Playlists", "root-playlists", playlist_collection_type(request), await _playlist_count()))
+        items.append(_make_library("播放列表", "root-playlists", playlist_collection_type(request), await _playlist_count()))
     if runtime.ENABLE_TAG_FILTERS:
-        items.append(_make_library("Tags", "root-tags", "movies", counts.get("root-tags", 0)))
+        items.append(_make_library("标签", "root-tags", "movies", counts.get("root-tags", 0)))
     for tag_name in sorted(runtime.TAG_GROUPS, key=str.lower):
         tag_id = f"tag-{tag_name.lower().replace(' ', '-')}"
         items.append(_make_library(tag_name, tag_id, "movies", counts.get(tag_id, 0)))
@@ -282,17 +282,17 @@ async def endpoint_virtual_folders(request):
     # paths, leaving its local catalog empty (search, All Movies, playlists
     # all return nothing). The path is a label only; nothing reads it.
     folders = [
-        {"Name": "Scenes",     "Locations": ["/stash/scenes"],     "CollectionType": "movies", "ItemId": "root-scenes"},
-        {"Name": "Studios",    "Locations": ["/stash/studios"],    "CollectionType": "movies", "ItemId": "root-studios"},
-        {"Name": "Performers", "Locations": ["/stash/performers"], "CollectionType": "movies", "ItemId": "root-performers"},
-        {"Name": "Groups",     "Locations": ["/stash/groups"],     "CollectionType": "movies", "ItemId": "root-groups"},
+        {"Name": "场景",     "Locations": ["/stash/scenes"],     "CollectionType": "movies", "ItemId": "root-scenes"},
+        {"Name": "厂商",    "Locations": ["/stash/studios"],    "CollectionType": "movies", "ItemId": "root-studios"},
+        {"Name": "演员", "Locations": ["/stash/performers"], "CollectionType": "movies", "ItemId": "root-performers"},
+        {"Name": "分组",     "Locations": ["/stash/groups"],     "CollectionType": "movies", "ItemId": "root-groups"},
     ]
     if await _has_series_studios():
-        folders.append({"Name": "Series", "Locations": ["/stash/series"], "CollectionType": _series_collection_type(request), "ItemId": "root-series"})
+        folders.append({"Name": "系列", "Locations": ["/stash/series"], "CollectionType": _series_collection_type(request), "ItemId": "root-series"})
     if await _has_playlists():
-        folders.append({"Name": "Playlists", "Locations": ["/stash/playlists"], "CollectionType": playlist_collection_type(request), "ItemId": "root-playlists"})
+        folders.append({"Name": "播放列表", "Locations": ["/stash/playlists"], "CollectionType": playlist_collection_type(request), "ItemId": "root-playlists"})
     if runtime.ENABLE_TAG_FILTERS:
-        folders.append({"Name": "Tags", "Locations": ["/stash/tags"], "CollectionType": "movies", "ItemId": "root-tags"})
+        folders.append({"Name": "标签", "Locations": ["/stash/tags"], "CollectionType": "movies", "ItemId": "root-tags"})
     for tag_name in sorted(runtime.TAG_GROUPS, key=str.lower):
         tag_id = f"tag-{tag_name.lower().replace(' ', '-')}"
         folders.append({"Name": tag_name, "Locations": [f"/stash/{tag_id}"], "CollectionType": "movies", "ItemId": tag_id})
@@ -490,7 +490,7 @@ async def endpoint_shows_seasons(request):
 # endpoint can fetch hundreds of scenes at once for a big series.
 _EPISODE_FIELDS = (
     "id title code date details play_count resume_time last_played_at "
-    "files { path basename duration size video_codec audio_codec width height frame_rate bit_rate } "
+    "files { id path basename duration size video_codec audio_codec width height frame_rate bit_rate } "
     "studio { id name tags { name } parent_studio { id name tags { name } } } "
     "tags { name } performers { name id image_path } "
     "captions { language_code caption_type } "

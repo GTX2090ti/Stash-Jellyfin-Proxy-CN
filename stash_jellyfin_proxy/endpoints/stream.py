@@ -20,9 +20,43 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from stash_jellyfin_proxy import runtime
 from stash_jellyfin_proxy.stash.client import fetch_from_stash, _get_async_client, stash_query
-from stash_jellyfin_proxy.util.ids import get_numeric_id
+from stash_jellyfin_proxy.util.ids import get_file_id, get_numeric_id
+from stash_jellyfin_proxy.util.local_media import local_file_response, resolve_local_path
 
 logger = logging.getLogger("stash-jellyfin-proxy")
+
+
+def _requested_file_id(request, item_id: str) -> str:
+    """Which file of the scene does this request address?
+
+    Multi-file scenes expose one MediaSource per file; the default source
+    keeps the bare `scene-<id>` id while the rest carry a `-f<fileId>`
+    suffix. Clients echo the MediaSource id back as `MediaSourceId`, so
+    check both that and the item id itself.
+    """
+    candidate = get_file_id(item_id)
+    if not candidate:
+        candidate = get_file_id(request.query_params.get("MediaSourceId", "") or "")
+    return candidate
+
+
+async def _resolve_file_local_path(scene_id: str, file_id: str) -> str:
+    """Look up a Stash file id's path and translate it into a local path.
+
+    Returns "" when the file can't be found or isn't reachable from this
+    container — the caller then falls back to the Stash stream."""
+    try:
+        res = await stash_query(
+            """query FindScene($id: ID!) { findScene(id: $id) { files { id path } } }""",
+            {"id": scene_id},
+        )
+        files = (res.get("data", {}).get("findScene") or {}).get("files") or []
+        for f in files:
+            if str(f.get("id")) == str(file_id):
+                return resolve_local_path(f.get("path") or "") or ""
+    except Exception as e:
+        logger.error(f"Could not resolve file {file_id} of scene {scene_id}: {e}")
+    return ""
 
 
 async def endpoint_stream(request):
@@ -35,6 +69,22 @@ async def endpoint_stream(request):
     ua = request.headers.get("user-agent", "")[:80]
     range_hdr = request.headers.get("range", "")
     logger.info(f"🎞 Stream request: item={item_id} range={range_hdr!r} ua={ua!r}")
+
+    # Multi-file scene: a non-default MediaSource was selected. Stash can
+    # only stream the scene's primary file, so serve this one off disk when
+    # the library is mounted; otherwise fall through to the Stash stream
+    # (which will return the primary file — see util/local_media.py).
+    if runtime.MULTI_FILE_SCENES:
+        file_id = _requested_file_id(request, item_id)
+        if file_id:
+            local_path = await _resolve_file_local_path(numeric_id, file_id)
+            if local_path:
+                logger.info(f"🎞 Serving file {file_id} from disk: {local_path}")
+                return local_file_response(local_path, os.path.basename(local_path))
+            logger.warning(
+                f"🎞 File {file_id} of scene {numeric_id} not reachable on disk; "
+                f"falling back to the Stash stream (primary file)"
+            )
 
     extra_headers = {}
     if "range" in request.headers:
@@ -110,6 +160,16 @@ async def endpoint_download(request):
     stash_stream_url = f"{runtime.STASH_URL}/scene/{numeric_id}/stream"
 
     logger.info(f"Download requested for {item_id}")
+
+    if runtime.MULTI_FILE_SCENES:
+        file_id = _requested_file_id(request, item_id)
+        if file_id:
+            local_path = await _resolve_file_local_path(numeric_id, file_id)
+            if local_path:
+                logger.info(f"Download serving file {file_id} from disk: {local_path}")
+                return local_file_response(
+                    local_path, os.path.basename(local_path), download=True
+                )
 
     try:
         res = await stash_query(

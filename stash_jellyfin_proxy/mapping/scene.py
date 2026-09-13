@@ -61,6 +61,151 @@ def is_group_favorite(group: Dict[str, Any]) -> bool:
 _GENRE_UNSET = object()
 
 
+def _res_label(height: int) -> str:
+    """Resolution label in the Jellyfin convention (4K / 2K / 1080p / ...)."""
+    if height >= 2160:
+        return "4K"
+    if height >= 1440:
+        return "2K"
+    if height >= 1080:
+        return "1080p"
+    if height >= 720:
+        return "720p"
+    if height >= 480:
+        return "SD"
+    return f"{height}p" if height else ""
+
+
+def version_display_name(file_data: Dict[str, Any], fallback: str = "") -> str:
+    """Label shown in the client's version picker, e.g. '1080p H264'."""
+    label = _res_label(file_data.get("height") or 0)
+    codec = (file_data.get("video_codec") or "").upper()
+    name = " ".join(p for p in (label, codec) if p).strip()
+    return name or fallback
+
+
+def build_media_source(
+    file_data: Dict[str, Any],
+    media_source_id: str,
+    title: str,
+    captions=None,
+) -> Dict[str, Any]:
+    """Build one Jellyfin MediaSource from a Stash VideoFile dict.
+
+    Mirrors the media-source shape produced inline for a scene's default
+    file in `format_jellyfin_item` so multi-file scenes get structurally
+    identical sources — clients treat every version the same way.
+    `captions` is only passed for the default source: Stash stores captions
+    against the primary file, so alternate files carry none.
+    """
+    captions = captions or []
+    path = file_data.get("path") or ""
+    duration = float(file_data.get("duration") or 0)
+    video_codec = (file_data.get("video_codec") or "h264").lower()
+    audio_codec = (file_data.get("audio_codec") or "").lower()
+    vid_width = file_data.get("width") or 0
+    vid_height = file_data.get("height") or 0
+    frame_rate = file_data.get("frame_rate") or 0
+    bit_rate = file_data.get("bit_rate") or 0
+    file_size = file_data.get("size") or 0
+
+    container = "mp4"
+    if path:
+        ext = os.path.splitext(path)[1].lower().lstrip(".")
+        if ext in ("mkv", "avi", "wmv", "flv", "webm", "mov", "ts", "m4v", "mp4"):
+            container = ext
+
+    video_stream = {
+        "Index": 0,
+        "Type": "Video",
+        "Codec": video_codec,
+        "IsDefault": True,
+        "IsForced": False,
+        "IsExternal": False,
+    }
+    if vid_width and vid_height:
+        video_stream["Width"] = vid_width
+        video_stream["Height"] = vid_height
+        video_stream["AspectRatio"] = f"{vid_width}:{vid_height}"
+        display = f"{_res_label(vid_height)} {(video_codec or '').upper()}".strip()
+        video_stream["DisplayTitle"] = display
+        video_stream["Title"] = display
+    if bit_rate:
+        video_stream["BitRate"] = bit_rate
+    if frame_rate:
+        video_stream["RealFrameRate"] = frame_rate
+        video_stream["AverageFrameRate"] = frame_rate
+
+    media_streams = [video_stream]
+
+    effective_audio_codec = audio_codec if audio_codec else "aac"
+    media_streams.append({
+        "Index": 1,
+        "Type": "Audio",
+        "Codec": effective_audio_codec,
+        "Language": "und",
+        "DisplayLanguage": "Unknown",
+        "IsDefault": True,
+        "IsForced": False,
+        "IsExternal": False,
+        "IsInterlaced": False,
+        "IsTextSubtitleStream": False,
+        "SupportsExternalStream": False,
+        "DisplayTitle": f"{effective_audio_codec.upper()} - Stereo",
+        "Channels": 2,
+        "ChannelLayout": "stereo",
+        "SampleRate": 48000,
+    })
+
+    lang_names = {
+        "en": "English", "de": "German", "es": "Spanish",
+        "fr": "French", "it": "Italian", "nl": "Dutch",
+        "pt": "Portuguese", "ja": "Japanese", "ko": "Korean",
+        "zh": "Chinese", "ru": "Russian", "und": "Unknown",
+    }
+    for idx, caption in enumerate(captions):
+        lang_code = caption.get("language_code", "und")
+        caption_type = (caption.get("caption_type", "") or "").lower()
+        if caption_type not in ("srt", "vtt"):
+            caption_type = "vtt"
+        codec = "srt" if caption_type == "srt" else "webvtt"
+        display_lang = lang_names.get(lang_code, lang_code.upper())
+        media_streams.append({
+            "Index": 2 + idx,
+            "Type": "Subtitle",
+            "Codec": codec,
+            "Language": lang_code,
+            "DisplayLanguage": display_lang,
+            "DisplayTitle": f"{display_lang} ({caption_type.upper()})",
+            "Title": display_lang,
+            "IsDefault": idx == 0,
+            "IsForced": False,
+            "IsExternal": True,
+            "IsTextSubtitleStream": True,
+            "SupportsExternalStream": True,
+            "DeliveryMethod": "External",
+            "DeliveryUrl": f"Subtitles/{idx + 1}/0/Stream.{caption_type}",
+        })
+
+    return {
+        "Id": media_source_id,
+        "Name": title,
+        "Path": path,
+        "Protocol": "File",
+        "Type": "Default",
+        "Container": container,
+        "RunTimeTicks": int(duration * 10000000) if duration else 0,
+        "Size": int(file_size) if file_size else 0,
+        "Bitrate": bit_rate if bit_rate else 0,
+        "SupportsDirectPlay": True,
+        "SupportsDirectStream": True,
+        "SupportsTranscoding": False,
+        "MediaStreams": media_streams,
+        "DefaultAudioStreamIndex": 1,
+        "DefaultSubtitleStreamIndex": -1,
+    }
+
+
 def format_jellyfin_item(
     scene: Dict[str, Any],
     parent_id: str = "root-scenes",
@@ -367,6 +512,28 @@ def format_jellyfin_item(
         }
 
         item["MediaSources"] = [media_source]
+
+        # Multi-file scenes — the result of Stash's "Merge" action, where a
+        # single scene record owns several video files. Stash's HTTP layer
+        # only ever streams the PRIMARY file, so without this every merged
+        # scene collapses to one playable video in the client. Emit one
+        # MediaSource per additional file; endpoints/stream.py resolves the
+        # `-f<fileId>` suffix back to the file and serves it off disk.
+        if runtime.MULTI_FILE_SCENES and len(files) > 1:
+            for extra in files[1:]:
+                extra_file_id = extra.get("id")
+                if not extra_file_id:
+                    continue
+                item["MediaSources"].append(
+                    build_media_source(
+                        file_data=extra,
+                        media_source_id=f"{item_id}-f{extra_file_id}",
+                        title=version_display_name(
+                            extra,
+                            os.path.basename(extra.get("path") or "") or title,
+                        ),
+                    )
+                )
         # Web client's playbackManager reads MediaStreams / VideoType /
         # Container off the top-level item (not just the MediaSource)
         # when constructing the stream URL and selecting audio/sub tracks.

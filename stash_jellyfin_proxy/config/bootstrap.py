@@ -80,6 +80,9 @@ def run_bootstrap(config_file: str, local_config_file: str) -> None:
     ENABLE_IMAGE_RESIZE = True
     ENABLE_TAG_FILTERS = False
     ENABLE_ALL_TAGS = False
+    MULTI_FILE_SCENES = False
+    LIBRARY_PATH_MAP = ""
+    UI_LANGUAGE = "auto"
     REQUIRE_AUTH_FOR_CONFIG = False
     STASH_TIMEOUT = 30
     STASH_RETRIES = 3
@@ -185,6 +188,14 @@ def run_bootstrap(config_file: str, local_config_file: str) -> None:
             ENABLE_TAG_FILTERS = parse_bool(cfg.get("ENABLE_TAG_FILTERS"), ENABLE_TAG_FILTERS)
         if "ENABLE_ALL_TAGS" in cfg:
             ENABLE_ALL_TAGS = parse_bool(cfg.get("ENABLE_ALL_TAGS"), ENABLE_ALL_TAGS)
+        if "multi_file_scenes" in cfg:
+            MULTI_FILE_SCENES = cfg.get("multi_file_scenes", "false").strip().lower() in ("true", "yes", "1", "on")
+        elif "MULTI_FILE_SCENES" in cfg:
+            MULTI_FILE_SCENES = parse_bool(cfg.get("MULTI_FILE_SCENES"), MULTI_FILE_SCENES)
+        if "library_path_map" in cfg:
+            LIBRARY_PATH_MAP = cfg.get("library_path_map", "").strip()
+        elif "LIBRARY_PATH_MAP" in cfg:
+            LIBRARY_PATH_MAP = cfg.get("LIBRARY_PATH_MAP", "").strip()
         if "REQUIRE_AUTH_FOR_CONFIG" in cfg:
             REQUIRE_AUTH_FOR_CONFIG = parse_bool(cfg.get("REQUIRE_AUTH_FOR_CONFIG"), REQUIRE_AUTH_FOR_CONFIG)
         if "IMAGE_CACHE_MAX_SIZE" in cfg:
@@ -332,6 +343,12 @@ def run_bootstrap(config_file: str, local_config_file: str) -> None:
     if os.getenv("STASH_VERIFY_TLS"):
         STASH_VERIFY_TLS = os.getenv("STASH_VERIFY_TLS", "").lower() in ("true", "yes", "1", "on")
         env_overrides.append("STASH_VERIFY_TLS")
+    if os.getenv("MULTI_FILE_SCENES"):
+        MULTI_FILE_SCENES = os.getenv("MULTI_FILE_SCENES", "").lower() in ("true", "yes", "1", "on")
+        env_overrides.append("MULTI_FILE_SCENES")
+    if os.getenv("LIBRARY_PATH_MAP"):
+        LIBRARY_PATH_MAP = os.getenv("LIBRARY_PATH_MAP", "").strip()
+        env_overrides.append("LIBRARY_PATH_MAP")
 
     if env_overrides:
         print(f"  Env overrides: {', '.join(env_overrides)}")
@@ -366,6 +383,9 @@ def run_bootstrap(config_file: str, local_config_file: str) -> None:
     banner_suffix = f", tags=[{', '.join(BANNER_TAGS)}]" if BANNER_TAGS else ""
     print(f"  Banner: mode={BANNER_MODE}, pool={BANNER_POOL_SIZE}{banner_suffix}")
     print(f"  Series tag: {SERIES_TAG}")
+    if MULTI_FILE_SCENES:
+        print(f"  Multi-file scenes: enabled (library path map: {LIBRARY_PATH_MAP or 'UNSET — non-primary files will fall back to the Stash stream'})")
+    print(f"  Config UI language: {UI_LANGUAGE}")
 
     # ---- Load player profiles from [player.*] sections ----
     from stash_jellyfin_proxy.players.profiles import load_profiles
@@ -510,6 +530,9 @@ def run_bootstrap(config_file: str, local_config_file: str) -> None:
         ENABLE_IMAGE_RESIZE=ENABLE_IMAGE_RESIZE,
         ENABLE_TAG_FILTERS=ENABLE_TAG_FILTERS,
         ENABLE_ALL_TAGS=ENABLE_ALL_TAGS,
+        MULTI_FILE_SCENES=MULTI_FILE_SCENES,
+        LIBRARY_PATH_MAP=LIBRARY_PATH_MAP,
+        UI_LANGUAGE=UI_LANGUAGE,
         REQUIRE_AUTH_FOR_CONFIG=REQUIRE_AUTH_FOR_CONFIG,
         DEFAULT_PAGE_SIZE=DEFAULT_PAGE_SIZE,
         MAX_PAGE_SIZE=MAX_PAGE_SIZE,

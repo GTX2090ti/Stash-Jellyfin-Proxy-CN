@@ -25,11 +25,28 @@ def get_numeric_id(item_id: str) -> str:
     """Extract numeric ID from various formats. Preserves pre-Phase-0.6
     behavior exactly: only scene- and studio- prefixes are stripped; other
     prefixed IDs (performer-, group-, tag-) fall through to
-    extract_numeric_id which collapses dashes."""
+    extract_numeric_id which collapses dashes.
+
+    Multi-file scenes append a `-f<fileId>` suffix to the MediaSource id
+    (see get_file_id); the suffix is stripped here so callers always get
+    the scene's own numeric id."""
     if item_id.startswith("scene-"):
-        return item_id.replace("scene-", "")
+        rest = item_id[len("scene-"):]
+        if "-f" in rest:
+            rest = rest.split("-f", 1)[0]
+        return rest
     elif item_id.startswith("studio-"):
         return item_id.replace("studio-", "")
     elif "-" in item_id:
         return extract_numeric_id(item_id)
     return item_id
+
+
+def get_file_id(item_id: str) -> str:
+    """Return the Stash file id encoded in a multi-file MediaSource id.
+
+    `scene-123-f456` -> "456"; returns "" when the id carries no file
+    suffix (i.e. the item addresses the scene's default/first source)."""
+    if item_id.startswith("scene-") and "-f" in item_id:
+        return item_id.split("-f", 1)[1]
+    return ""

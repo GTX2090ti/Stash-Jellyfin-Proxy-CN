@@ -120,9 +120,12 @@ function flashCopyButton(btn) {
   }, 700);
 }
 
-async function copyText(text, successMsg = "Copied to clipboard.") {
+async function copyText(text, successMsg = null) {
+  /* Resolved here rather than in the parameter default so the translation
+     is taken from the catalog active at call time, not at parse time. */
+  successMsg = successMsg || t("Copied to clipboard.");
   if (text == null || text === "") {
-    toast("Nothing to copy.", "warning");
+    toast(t("Nothing to copy."), "warning");
     return;
   }
   // iPad: skip the async API entirely — it can silently hang under WebKit.
@@ -130,7 +133,7 @@ async function copyText(text, successMsg = "Copied to clipboard.") {
     if (_copyViaTextarea(String(text))) {
       toast(successMsg, "success");
     } else {
-      toast("Copy failed — please long-press the field and pick Copy.", "error");
+      toast(t("Copy failed — please long-press the field and pick Copy."), "error");
     }
     return;
   }
@@ -147,7 +150,7 @@ async function copyText(text, successMsg = "Copied to clipboard.") {
   if (_copyViaTextarea(String(text))) {
     toast(successMsg, "success");
   } else {
-    toast("Copy failed — please select the value and copy manually.", "error");
+    toast(t("Copy failed — please select the value and copy manually."), "error");
   }
 }
 
@@ -160,13 +163,14 @@ async function copyText(text, successMsg = "Copied to clipboard.") {
    On iOS, we take a different route entirely: fetch first (fast — the
    /api/config/reveal endpoint is local), then hand off to copyText which
    uses the iOS-friendly textarea path. */
-async function copyLazy(getText, successMsg = "Copied to clipboard.") {
+async function copyLazy(getText, successMsg = null) {
+  successMsg = successMsg || t("Copied to clipboard.");
   if (!_IS_IOS && navigator.clipboard && typeof window.ClipboardItem === "function") {
     try {
       const item = new ClipboardItem({
-        "text/plain": Promise.resolve(getText()).then((t) => {
-          if (t == null || t === "") throw new Error("empty value");
-          return new Blob([String(t)], { type: "text/plain" });
+        "text/plain": Promise.resolve(getText()).then((val) => {
+          if (val == null || val === "") throw new Error("empty value");
+          return new Blob([String(val)], { type: "text/plain" });
         }),
       });
       await navigator.clipboard.write([item]);
@@ -180,13 +184,13 @@ async function copyLazy(getText, successMsg = "Copied to clipboard.") {
   try {
     const text = await getText();
     if (!text) {
-      toast("Nothing to copy.", "warning");
+      toast(t("Nothing to copy."), "warning");
       return;
     }
     await copyText(text, successMsg);
   } catch (err) {
     console.error("copyLazy failed:", err);
-    toast(`Copy failed: ${err.message || "clipboard unavailable"}`, "error");
+    toast(t("Copy failed: {e}", { e: err.message || t("clipboard unavailable") }), "error");
   }
 }
 
@@ -195,9 +199,11 @@ function formatUptime(sec) {
   const d = Math.floor(sec / 86400);
   const h = Math.floor((sec % 86400) / 3600);
   const m = Math.floor((sec % 3600) / 60);
-  if (d) return `${d}d ${h}h ${m}m`;
-  if (h) return `${h}h ${m}m`;
-  return `${m}m ${sec % 60}s`;
+  /* Composed via t() rather than concatenated: the unit suffixes differ
+     per language ("2h 5m" vs "2小时 5分"), so they cannot be appended. */
+  if (d) return t("{d}d {h}h {m}m", { d: d, h: h, m: m });
+  if (h) return t("{h}h {m}m", { h: h, m: m });
+  return t("{m}m {s}s", { m: m, s: sec % 60 });
 }
 
 function escapeHtml(s) {
@@ -243,14 +249,14 @@ async function pollStatus() {
     const upt = qs("#sidebar-uptime");
 
     proxyDot.className = "status-dot " + (s.running ? "on" : "err");
-    proxyLbl.textContent = s.running ? "Proxy Running" : "Proxy Down";
+    proxyLbl.textContent = s.running ? t("Proxy Running") : t("Proxy Down");
 
     stashDot.className = "status-dot " + (s.stashConnected ? "ok" : "err");
     stashLbl.textContent = s.stashConnected
-      ? (s.stashVersion ? `Stash ${s.stashVersion}` : "Stash OK")
-      : "Stash Error";
+      ? (s.stashVersion ? t("Stash {v}", { v: s.stashVersion }) : t("Stash OK"))
+      : t("Stash Error");
 
-    upt.textContent = `Uptime: ${formatUptime(s.uptime)}`;
+    upt.textContent = t("Uptime: {v}", { v: formatUptime(s.uptime) });
     qs("#brand-version").textContent = s.version || "";
   } catch {
     /* leave prior state on transient failure */
@@ -264,13 +270,13 @@ function markRestartNeeded() {
 }
 
 async function doRestart() {
-  if (!confirm("Restart the proxy now? Active streams will be interrupted.")) return;
+  if (!confirm(t("Restart the proxy now? Active streams will be interrupted."))) return;
   try {
     await apiPost("/api/restart", {});
-    toast("Restart initiated — reconnecting…", "success");
+    toast(t("Restart initiated — reconnecting…"), "success");
     setTimeout(() => window.location.reload(), 3500);
   } catch (e) {
-    toast(`Restart failed: ${e.message}`, "error");
+    toast(t("Restart failed: {e}", { e: e.message }), "error");
   }
 }
 
@@ -286,12 +292,12 @@ async function loadConfig(force = false) {
 async function saveConfig(patch) {
   const res = await apiPost("/api/config", patch);
   if (res.applied_immediately && res.applied_immediately.length) {
-    toast(`Saved. Applied live: ${res.applied_immediately.join(", ")}`, "success");
+    toast(t("Saved. Applied live: {keys}", { keys: res.applied_immediately.join(", ") }), "success");
   } else if (res.needs_restart && res.needs_restart.length) {
-    toast(`Saved. Requires restart: ${res.needs_restart.join(", ")}`, "warning");
+    toast(t("Saved. Requires restart: {keys}", { keys: res.needs_restart.join(", ") }), "warning");
     markRestartNeeded();
   } else {
-    toast("Saved.", "success");
+    toast(t("Saved."), "success");
   }
   await loadConfig(true);
   return res;
@@ -339,7 +345,7 @@ function bindFormFromConfig(root) {
     }
     if (app.envFields.has(key)) {
       el.setAttribute("disabled", "disabled");
-      el.title = "Overridden by environment variable";
+      el.title = t("Overridden by environment variable");
     }
   });
   /* Attach dirty-dot tracking once per section. */
@@ -410,7 +416,7 @@ async function saveSection(card) {
     const dot = qs(".unsaved-dot", card);
     if (dot) dot.classList.add("hide");
   } catch (e) {
-    toast(`Save failed: ${e.message}`, "error");
+    toast(t("Save failed: {e}", { e: e.message }), "error");
   }
 }
 
@@ -431,13 +437,13 @@ async function renderDashStatus() {
   try {
     const s = await apiGet("/api/status");
     qs("#dash-proxy-status").innerHTML = s.running
-      ? `${dotSpan("on")}Running`
-      : `${dotSpan("err")}Stopped`;
-    qs("#dash-proxy-uptime").textContent = `Uptime: ${formatUptime(s.uptime)}`;
+      ? `${dotSpan("on")}${t("Running")}`
+      : `${dotSpan("err")}${t("Stopped")}`;
+    qs("#dash-proxy-uptime").textContent = t("Uptime: {v}", { v: formatUptime(s.uptime) });
 
     qs("#dash-stash-status").innerHTML = s.stashConnected
-      ? `${dotSpan("ok")}Connected`
-      : `${dotSpan("err")}Error`;
+      ? `${dotSpan("ok")}${t("Connected")}`
+      : `${dotSpan("err")}${t("Error")}`;
     qs("#dash-stash-version").textContent = s.stashVersion || "";
 
     // Player connection address. Only shown when PUBLIC_URL is configured —
@@ -467,7 +473,7 @@ async function renderDashStatus() {
     // password can be revealed; it stays masked until the user clicks the eye.
     const userEl = qs("#dash-connect-user");
     if (userEl) {
-      userEl.textContent = s.sjsUser || "(not set)";
+      userEl.textContent = s.sjsUser || t("(not set)");
       userEl.dataset.value = s.sjsUser || "";
     }
     const passEl = qs("#dash-connect-pass");
@@ -476,7 +482,7 @@ async function renderDashStatus() {
       const revealed = passEl.dataset.revealed === "1";
       passEl.textContent = s.sjsPassword
         ? (revealed ? s.sjsPassword : "•".repeat(Math.min(s.sjsPassword.length, 16)))
-        : "(not set)";
+        : t("(not set)");
     }
 
     // Migration banner
@@ -527,7 +533,7 @@ async function renderDashLibraryAndUsage() {
     const top = qs("#dash-top-played");
     const items = s.proxy.top_played || [];
     if (!items.length) {
-      top.innerHTML = `<div class="field-help">No plays recorded yet.</div>`;
+      top.innerHTML = `<div class="field-help">${escapeHtml(t("No plays recorded yet."))}</div>`;
     } else {
       top.innerHTML = items.map((it, i) => `
         <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border);">
@@ -550,7 +556,7 @@ async function renderDashStreams() {
     qs("#dash-streams-count").textContent = s.streams.length;
     const list = qs("#dash-streams-list");
     if (!s.streams.length) {
-      list.innerHTML = `<div class="field-help">No active streams.</div>`;
+      list.innerHTML = `<div class="field-help">${escapeHtml(t("No active streams."))}</div>`;
       return;
     }
     list.innerHTML = s.streams.map((st) => {
@@ -560,7 +566,7 @@ async function renderDashStreams() {
           <div class="profile-name">${escapeHtml(st.title || st.id)}</div>
           <div style="display: flex; justify-content: space-between; color: var(--text-dim); font-size: 12px;">
             <span>${escapeHtml(st.performer || "")}</span>
-            <span>Started ${started}</span>
+            <span>${escapeHtml(t("Started {time}", { time: started }))}</span>
           </div>
         </div>
       `;
@@ -573,7 +579,7 @@ async function renderDashLogs() {
     const s = await apiGet("/api/logs?limit=20");
     const pane = qs("#dash-recent-logs");
     if (!s.entries.length) {
-      pane.textContent = "(no log entries yet)";
+      pane.textContent = t("(no log entries yet)");
       return;
     }
     pane.textContent = s.entries
@@ -591,13 +597,13 @@ window.init_dashboard = async function () {
     qs("#dash-streams-list")?.scrollIntoView({ behavior: "smooth" });
   });
   qs("#dash-reset-stats-btn").addEventListener("click", async () => {
-    if (!confirm("Reset proxy statistics? This clears play counts and auth counters.")) return;
+    if (!confirm(t("Reset proxy statistics? This clears play counts and auth counters."))) return;
     try {
       await apiPost("/api/stats/reset", {});
-      toast("Statistics reset.", "success");
+      toast(t("Statistics reset."), "success");
       await renderDashLibraryAndUsage();
     } catch (e) {
-      toast(`Reset failed: ${e.message}`, "error");
+      toast(t("Reset failed: {e}", { e: e.message }), "error");
     }
   });
   qs("#dash-migration-dismiss").addEventListener("click", () => {
@@ -615,7 +621,7 @@ window.init_dashboard = async function () {
     if (passEl && passEl.dataset.revealed === "1") {
       passEl.dataset.revealed = "0";
       const v = passEl.dataset.value || "";
-      passEl.textContent = v ? "•".repeat(Math.min(v.length, 16)) : "(not set)";
+      passEl.textContent = v ? "•".repeat(Math.min(v.length, 16)) : t("(not set)");
     }
   };
   qs("#dash-connect-open")?.addEventListener("click", async () => {
@@ -632,19 +638,19 @@ window.init_dashboard = async function () {
   qs("#dash-connect-copy")?.addEventListener("click", (e) => {
     flashCopyButton(e.currentTarget);
     const el = qs("#dash-connect-url");
-    copyText(el.dataset.url || el.textContent, "Server address copied to clipboard.");
+    copyText(el.dataset.url || el.textContent, t("Server address copied to clipboard."));
   });
   qs("#dash-connect-user-copy")?.addEventListener("click", (e) => {
     flashCopyButton(e.currentTarget);
     const v = qs("#dash-connect-user").dataset.value;
-    if (!v) return toast("No username set.", "warning");
-    copyText(v, "Username copied to clipboard.");
+    if (!v) return toast(t("No username set."), "warning");
+    copyText(v, t("Username copied to clipboard."));
   });
   qs("#dash-connect-pass-copy")?.addEventListener("click", (e) => {
     flashCopyButton(e.currentTarget);
     const v = qs("#dash-connect-pass").dataset.value;
-    if (!v) return toast("No password set.", "warning");
-    copyText(v, "Password copied to clipboard.");
+    if (!v) return toast(t("No password set."), "warning");
+    copyText(v, t("Password copied to clipboard."));
   });
   qs("#dash-connect-pass-reveal")?.addEventListener("click", () => {
     const passEl = qs("#dash-connect-pass");
@@ -681,10 +687,10 @@ const playersState = {
 };
 
 function relativeTime(ageSec) {
-  if (ageSec < 60) return `${ageSec}s ago`;
-  if (ageSec < 3600) return `${Math.floor(ageSec / 60)}m ago`;
-  if (ageSec < 86400) return `${Math.floor(ageSec / 3600)}h ago`;
-  return `${Math.floor(ageSec / 86400)}d ago`;
+  if (ageSec < 60) return t("{n}s ago", { n: ageSec });
+  if (ageSec < 3600) return t("{n}m ago", { n: Math.floor(ageSec / 60) });
+  if (ageSec < 86400) return t("{n}h ago", { n: Math.floor(ageSec / 3600) });
+  return t("{n}d ago", { n: Math.floor(ageSec / 86400) });
 }
 
 function profileBadgeClass(name) {
@@ -696,27 +702,27 @@ async function renderUaList() {
   try {
     const data = await apiGet("/api/players/ua-log");
     if (!data.entries.length) {
-      list.innerHTML = `<div class="field-help">No clients have connected yet.</div>`;
+      list.innerHTML = `<div class="field-help">${escapeHtml(t("No clients have connected yet."))}</div>`;
       return;
     }
     list.innerHTML = data.entries.map((e) => `
       <div class="profile-row" style="flex-direction: column; align-items: stretch; gap: 6px;">
         <div class="profile-name" style="word-break: break-all;">${escapeHtml(e.userAgent)}</div>
         <div style="display: flex; justify-content: space-between; align-items: center; color: var(--text-dim); font-size: 12px;">
-          <span>Last seen: ${relativeTime(e.ageSeconds)}</span>
-          <span>Profile: <span class="profile-badge ${profileBadgeClass(e.profile)}">${escapeHtml(e.profile)}</span></span>
-          <button class="icon-btn" data-copy="${encodeURIComponent(e.userAgent)}" title="Copy User-Agent">⧉</button>
+          <span>${escapeHtml(t("Last seen: {time}", { time: relativeTime(e.ageSeconds) }))}</span>
+          <span>${escapeHtml(t("Profile:"))} <span class="profile-badge ${profileBadgeClass(e.profile)}">${escapeHtml(e.profile)}</span></span>
+          <button class="icon-btn" data-copy="${encodeURIComponent(e.userAgent)}" title="${escapeHtml(t("Copy User-Agent"))}">⧉</button>
         </div>
       </div>
     `).join("");
     qsa("[data-copy]", list).forEach((btn) => {
       btn.addEventListener("click", () => {
         navigator.clipboard.writeText(decodeURIComponent(btn.dataset.copy));
-        toast("User-Agent copied to clipboard", "success");
+        toast(t("User-Agent copied to clipboard"), "success");
       });
     });
   } catch (e) {
-    list.innerHTML = `<div class="field-help" style="color: var(--err, #e86464);">Failed to load: ${escapeHtml(e.message)}</div>`;
+    list.innerHTML = `<div class="field-help" style="color: var(--err, #e86464);">${escapeHtml(t("Failed to load: {e}", { e: e.message }))}</div>`;
   }
 }
 
@@ -726,7 +732,7 @@ async function renderProfileList() {
     const data = await apiGet("/api/players/profiles");
     playersState.profiles = data.profiles;
     if (!data.profiles.length) {
-      list.innerHTML = `<div class="field-help">No profiles configured.</div>`;
+      list.innerHTML = `<div class="field-help">${escapeHtml(t("No profiles configured."))}</div>`;
       return;
     }
     list.innerHTML = data.profiles.map((p) => `
@@ -734,20 +740,22 @@ async function renderProfileList() {
         <div>
           <div class="profile-name">[${escapeHtml(p.name)}]</div>
           <div style="color: var(--text-dim); font-size: 12px;">
-            ${p.isDefault ? "— default —" : `match: ${escapeHtml(p.userAgentMatch || "(empty)")}`}
+            ${p.isDefault
+              ? escapeHtml(t("— default —"))
+              : escapeHtml(t("match: {v}", { v: p.userAgentMatch || t("(empty)") }))}
             · ${escapeHtml(p.performerType)} · ${escapeHtml(p.posterFormat)}
           </div>
         </div>
         <div class="profile-actions">
-          <button class="icon-btn" data-edit="${escapeHtml(p.name)}" title="Edit">✎</button>
-          ${p.isDefault ? "" : `<button class="icon-btn danger" data-delete="${escapeHtml(p.name)}" title="Delete">🗑</button>`}
+          <button class="icon-btn" data-edit="${escapeHtml(p.name)}" title="${escapeHtml(t("Edit"))}">✎</button>
+          ${p.isDefault ? "" : `<button class="icon-btn danger" data-delete="${escapeHtml(p.name)}" title="${escapeHtml(t("Delete"))}">🗑</button>`}
         </div>
       </div>
     `).join("");
     qsa("[data-edit]", list).forEach((btn) => btn.addEventListener("click", () => openProfileEditor(btn.dataset.edit)));
     qsa("[data-delete]", list).forEach((btn) => btn.addEventListener("click", () => confirmDeleteProfile(btn.dataset.delete)));
   } catch (e) {
-    list.innerHTML = `<div class="field-help" style="color: var(--err, #e86464);">Failed to load: ${escapeHtml(e.message)}</div>`;
+    list.innerHTML = `<div class="field-help" style="color: var(--err, #e86464);">${escapeHtml(t("Failed to load: {e}", { e: e.message }))}</div>`;
   }
 }
 
@@ -757,8 +765,8 @@ function openProfileEditor(name) {
   playersState.editingName = existing ? existing.name : null;
 
   qs("#profile-editor-title").textContent = existing
-    ? `Edit Player Profile: ${existing.name}`
-    : "Add Player Profile";
+    ? t("Edit Player Profile: {name}", { name: existing.name })
+    : t("Add Player Profile");
   const nameInput = qs("#profile-editor-name");
   nameInput.value = existing ? existing.name : "";
   nameInput.disabled = !!(existing && existing.isDefault);
@@ -785,7 +793,7 @@ async function saveProfileEditor() {
   const perfRadio = qs('input[name=profile-perf]:checked');
   const posterRadio = qs('input[name=profile-poster]:checked');
   if (!name || !/^[a-z0-9_]+$/.test(name)) {
-    toast("Profile name must be lowercase letters/digits/underscore", "error");
+    toast(t("Profile name must be lowercase letters/digits/underscore"), "error");
     return;
   }
   try {
@@ -795,25 +803,26 @@ async function saveProfileEditor() {
       performerType: perfRadio ? perfRadio.value : "BoxSet",
       posterFormat: posterRadio ? posterRadio.value : "landscape",
     });
-    toast(`Profile ${name} saved.`, "success");
+    toast(t("Profile {name} saved.", { name: name }), "success");
     closeProfileEditor();
     await renderProfileList();
   } catch (e) {
-    toast(`Save failed: ${e.message}`, "error");
+    toast(t("Save failed: {e}", { e: e.message }), "error");
   }
 }
 
 async function confirmDeleteProfile(name) {
   const existing = playersState.profiles.find((p) => p.name === name);
   const ua = existing ? existing.userAgentMatch : "";
-  const msg = `Delete profile [${name}]? Clients matching '${ua || "(empty)"}' will fall back to [default].`;
+  const msg = t("Delete profile [{name}]? Clients matching '{ua}' will fall back to [default].",
+                { name: name, ua: ua || t("(empty)") });
   if (!confirm(msg)) return;
   try {
     await apiPost("/api/players/profile/delete", { name });
-    toast(`Profile ${name} deleted.`, "success");
+    toast(t("Profile {name} deleted.", { name: name }), "success");
     await renderProfileList();
   } catch (e) {
-    toast(`Delete failed: ${e.message}`, "error");
+    toast(t("Delete failed: {e}", { e: e.message }), "error");
   }
 }
 
@@ -848,6 +857,8 @@ window.show_search = async function () {
 /* ============================================================ */
 /* Playback tab                                                 */
 /* ============================================================ */
+/* Value → label. The label is an English catalog key, translated when the
+   <option> is built, so a language change just rebuilds the list. */
 const SORT_OPTIONS = [
   ["DateCreated", "Date Added"],
   ["SortName", "Name"],
@@ -859,13 +870,17 @@ const SORT_OPTIONS = [
 function populateSortDefaults() {
   const root = pageRoot("playback");
   if (!root) return;
+  const langNow = (window.SJP_I18N && window.SJP_I18N.getLang()) || "en";
   qsa("select[data-sort-options]", root).forEach((sel) => {
-    if (sel._populated) return;
-    sel._populated = true;
+    /* Keyed on the active language rather than a boolean so switching
+       language rebuilds the option labels in place. */
+    if (sel._populated === langNow) return;
+    sel._populated = langNow;
+    sel.replaceChildren();
     SORT_OPTIONS.forEach(([val, label]) => {
       const opt = document.createElement("option");
       opt.value = val;
-      opt.textContent = label;
+      opt.textContent = t(label);
       sel.appendChild(opt);
     });
   });
@@ -895,6 +910,7 @@ window.show_playback = async function () {
 /* ============================================================ */
 /* Libraries tab                                                */
 /* ============================================================ */
+/* English catalog keys, resolved through t() at render time. */
 const GENRE_MODE_NOTES = {
   all_tags: "Every tag on a scene becomes a genre. Best for small, curated tag sets.",
   parent_tag: "Only tags that are direct children of your GENRE parent tag become genres. Recommended for large collections.",
@@ -910,7 +926,7 @@ function updateGenreModeVisibility() {
     el.style.display = (el.dataset.showsFor === mode) ? "" : "none";
   });
   const note = qs("#genre-mode-note", root);
-  if (note) note.textContent = GENRE_MODE_NOTES[mode] || "";
+  if (note) note.textContent = GENRE_MODE_NOTES[mode] ? t(GENRE_MODE_NOTES[mode]) : "";
 }
 
 window.init_libraries = async function () {
@@ -929,23 +945,24 @@ window.init_libraries = async function () {
     const pats = qs('[data-key=SERIES_EPISODE_PATTERNS]').value
       .split("\n").map((s) => s.trim()).filter(Boolean);
     const result = qs("#series-pattern-test-result");
-    if (!title) { result.textContent = "Enter a title to test."; result.style.color = ""; return; }
+    if (!title) { result.textContent = t("Enter a title to test."); result.style.color = ""; return; }
     for (let i = 0; i < pats.length; i++) {
       try {
         const re = new RegExp(pats[i], "i");
         const m = title.match(re);
         if (m && m.length >= 3) {
-          result.textContent = `✓ Matched pattern ${i + 1}: Season ${m[1]}, Episode ${m[2]}`;
+          result.textContent = t("✓ Matched pattern {n}: Season {s}, Episode {e}",
+                                 { n: i + 1, s: m[1], e: m[2] });
           result.style.color = "var(--ok, #36c563)";
           return;
         }
       } catch (e) {
-        result.textContent = `✗ Pattern ${i + 1} invalid: ${e.message}`;
+        result.textContent = t("✗ Pattern {n} invalid: {e}", { n: i + 1, e: e.message });
         result.style.color = "var(--err, #e86464)";
         return;
       }
     }
-    result.textContent = "✗ No match — would go to Season 0";
+    result.textContent = t("✗ No match — would go to Season 0");
     result.style.color = "var(--warn, #e8a864)";
   });
 };
@@ -976,19 +993,19 @@ window.init_connection = async function () {
     if (apiKeyInput !== "") payload.STASH_API_KEY = apiKeyInput;
 
     btn.disabled = true;
-    result.textContent = "Testing…";
+    result.textContent = t("Testing…");
     result.style.color = "";
     try {
       const res = await apiPost("/api/stash/test", payload);
       if (res.ok) {
-        result.innerHTML = `✓ Connected — Stash ${escapeHtml(res.version || "unknown")}`;
+        result.innerHTML = escapeHtml(t("✓ Connected — Stash {v}", { v: res.version || t("unknown") }));
         result.style.color = "var(--ok, #36c563)";
       } else {
-        result.innerHTML = `✗ Connection failed: ${escapeHtml(res.error || "unknown error")}`;
+        result.innerHTML = escapeHtml(t("✗ Connection failed: {e}", { e: res.error || t("unknown error") }));
         result.style.color = "var(--err, #e86464)";
       }
     } catch (e) {
-      result.innerHTML = `✗ Connection failed: ${escapeHtml(e.message)}`;
+      result.innerHTML = escapeHtml(t("✗ Connection failed: {e}", { e: e.message }));
       result.style.color = "var(--err, #e86464)";
     } finally {
       btn.disabled = false;
@@ -1012,9 +1029,9 @@ window.init_system = async function () {
   qs("#sys-clearcache-btn").addEventListener("click", async () => {
     try {
       const res = await apiPost("/api/cache/clear", {});
-      toast(`Cache cleared: ${(res.cleared || []).join(", ")}`, "success");
+      toast(t("Cache cleared: {v}", { v: (res.cleared || []).join(", ") }), "success");
     } catch (e) {
-      toast(`Clear cache failed: ${e.message}`, "error");
+      toast(t("Clear cache failed: {e}", { e: e.message }), "error");
     }
   });
 
@@ -1042,9 +1059,9 @@ window.init_system = async function () {
       a.click();
       a.remove();
       URL.revokeObjectURL(objUrl);
-      toast(`Downloaded ${filename}.`, "success");
+      toast(t("Downloaded {f}.", { f: filename }), "success");
     } catch (e) {
-      toast(`Download failed: ${e.message}`, "error");
+      toast(t("Download failed: {e}", { e: e.message }), "error");
     }
   });
 };
@@ -1070,7 +1087,8 @@ async function fetchLogs() {
     logsState.entries = data.entries || [];
     renderLogs();
   } catch (e) {
-    qs("#log-viewer").innerHTML = `<em style="color: var(--error);">Failed to load logs: ${escapeHtml(e.message)}</em>`;
+    qs("#log-viewer").innerHTML =
+      `<em style="color: var(--error);">${escapeHtml(t("Failed to load logs: {e}", { e: e.message }))}</em>`;
   }
 }
 
@@ -1085,11 +1103,11 @@ function renderLogs() {
   const total = logsState.entries.length;
   const shown = filtered.length;
   qs("#log-count-indicator").textContent = shown === total
-    ? `${shown} lines`
-    : `Showing ${shown} of ${total} lines`;
+    ? t("{n} lines", { n: shown })
+    : t("Showing {n} of {t} lines", { n: shown, t: total });
 
   if (!filtered.length) {
-    viewer.innerHTML = `<em style="color: var(--text-faint);">No log lines match the current filter.</em>`;
+    viewer.innerHTML = `<em style="color: var(--text-faint);">${escapeHtml(t("No log lines match the current filter."))}</em>`;
     return;
   }
   const frag = document.createDocumentFragment();
@@ -1135,13 +1153,13 @@ window.init_logs = function () {
       return true;
     });
     if (!filtered.length) {
-      toast("No log lines to copy (filter removed everything).", "warning");
+      toast(t("No log lines to copy (filter removed everything)."), "warning");
       return;
     }
     const text = filtered
       .map((e) => `${e.timestamp || ""} [${(e.level || "INFO").toUpperCase()}] ${e.message || ""}`)
       .join("\n");
-    copyText(text, `Copied ${filtered.length} log lines to clipboard.`);
+    copyText(text, t("Copied {n} log lines to clipboard.", { n: filtered.length }));
   });
   qs("#log-clear-btn").addEventListener("click", () => {
     qs("#log-viewer").innerHTML = "";
@@ -1162,11 +1180,31 @@ window.init_logs = function () {
 
 /* ---- Boot ---- */
 document.addEventListener("DOMContentLoaded", () => {
+  /* i18n.js boots first — its DOMContentLoaded listener was registered
+     earlier, from <head> — so the static chrome is already translated by
+     the time this runs and every t() below resolves against the right
+     catalog. */
   wireNav();
   pollStatus();
   setInterval(pollStatus, 10000);
   qs("#restart-now-btn").addEventListener("click", doRestart);
-  loadConfig().catch((e) => toast(`Config load failed: ${e.message}`, "error"));
+  loadConfig().catch((e) => toast(t("Config load failed: {e}", { e: e.message }), "error"));
+
+  /* Language change: re-render the visible tab. Strings baked into
+     innerHTML are not revisited by the engine's DOM walker, so the render
+     functions have to run again to pick up the new catalog. Static chrome
+     is handled by the engine itself. */
+  document.addEventListener("sjp:langchange", () => {
+    const active = qs(".nav-item.active");
+    const page = active ? active.dataset.page : "dashboard";
+    const rerender = window["show_" + page];
+    if (typeof rerender === "function") {
+      try { rerender(); } catch (err) { console.error("re-render after language change failed", err); }
+    }
+    /* The sort <select>s are populated once per language; rebuild them so
+       the option labels follow the switch. */
+    try { populateSortDefaults(); } catch (err) { /* playback tab not initialised */ }
+  });
 
   // Reveal (eyeball) toggle for password inputs wrapped in .pw-wrap.
   // Delegated so it covers any current or future .pw-reveal button.
@@ -1189,10 +1227,10 @@ document.addEventListener("DOMContentLoaded", () => {
             input.value = r.value;
             input.dataset.secretInjected = "1";  // server-supplied, clear on hide
           } else {
-            toast(`No ${key === "SJS_PASSWORD" ? "password" : "API key"} is set.`, "warning");
+            toast(t("No {label} is set.", { label: key === "SJS_PASSWORD" ? t("Password") : t("API key") }), "warning");
           }
         } catch (err) {
-          toast(`Could not reveal value: ${err.message}`, "error");
+          toast(t("Could not reveal value: {e}", { e: err.message }), "error");
           return;
         }
       }
@@ -1231,13 +1269,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!input) return;
     const key = input.dataset.key;
     const labels = {
-      STASH_API_KEY: "API key",
-      SJS_PASSWORD: "Password",
-      SJS_USER: "Username",
-      PUBLIC_URL: "Server address",
+      STASH_API_KEY: t("API key"),
+      SJS_PASSWORD: t("Password"),
+      SJS_USER: t("Username"),
+      PUBLIC_URL: t("Server address"),
     };
-    const label = labels[key] || "Value";
-    const successMsg = `${label} copied to clipboard.`;
+    const label = labels[key] || t("Value");
+    const successMsg = t("{label} copied to clipboard.", { label: label });
 
     // Plain-text field with a value already in the DOM — copy synchronously,
     // which is the simplest and most-permissive path.
@@ -1253,6 +1291,6 @@ document.addEventListener("DOMContentLoaded", () => {
       }, successMsg);
       return;
     }
-    toast(`No ${label} is set.`, "warning");
+    toast(t("No {label} is set.", { label: label }), "warning");
   });
 });

@@ -40,7 +40,7 @@ logger = logging.getLogger("stash-jellyfin-proxy")
 # Same scene field bag used elsewhere — keeps format_jellyfin_item happy.
 _SCENE_FIELDS = (
     "id title code date details play_count resume_time last_played_at "
-    "files { path basename duration size video_codec audio_codec width height frame_rate bit_rate } "
+    "files { id path basename duration size video_codec audio_codec width height frame_rate bit_rate } "
     "studio { id name tags { name } parent_studio { id name tags { name } } } "
     "tags { name } performers { name id image_path } "
     "captions { language_code caption_type } "
