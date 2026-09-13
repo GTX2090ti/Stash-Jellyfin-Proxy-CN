@@ -20,6 +20,7 @@ or the file is not reachable, callers fall back to the Stash stream.
 """
 import logging
 import os
+import urllib.parse
 from typing import Optional
 
 from starlette.responses import FileResponse
@@ -74,6 +75,34 @@ def resolve_local_path(stash_path: str) -> Optional[str]:
     return None
 
 
+def content_disposition(filename: str, download: bool = False) -> str:
+    """Build an RFC 6266 Content-Disposition for a possibly non-ASCII name.
+
+    HTTP header values are latin-1 (RFC 7230). Writing a filename with CJK
+    characters into the header literally raises UnicodeEncodeError inside the
+    ASGI server, which surfaces to the client as a 500 with an empty body and
+    no traceback in the log — the failure mode seen with a Japanese-named file
+    of a merged scene.
+
+    So emit both forms: an ASCII-only `filename=` for clients that predate
+    RFC 5987 (the name is best-effort and may lose characters) and a
+    percent-encoded UTF-8 `filename*=`, which is the one that actually
+    matters and is what every current Jellyfin client reads.
+    """
+    disposition = "attachment" if download else "inline"
+
+    ascii_name = filename.encode("ascii", "ignore").decode("ascii")
+    ascii_name = ascii_name.replace('"', "").replace("\\", "").strip()
+    if not ascii_name or ascii_name.startswith("."):
+        # Nothing usable survived (e.g. an all-CJK basename). Keep the
+        # extension so clients still infer a container.
+        ext = os.path.splitext(filename)[1].encode("ascii", "ignore").decode("ascii")
+        ascii_name = "video" + ext
+
+    encoded = urllib.parse.quote(filename, safe="")
+    return f'{disposition}; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded}'
+
+
 def local_file_response(local_path: str, filename: str = "", download: bool = False) -> FileResponse:
     """Serve a media file straight off disk.
 
@@ -92,7 +121,6 @@ def local_file_response(local_path: str, filename: str = "", download: bool = Fa
 
     headers = {}
     if filename:
-        disposition = "attachment" if download else "inline"
-        headers["Content-Disposition"] = f'{disposition}; filename="{filename}"'
+        headers["Content-Disposition"] = content_disposition(filename, download)
 
     return FileResponse(local_path, media_type=media_type, headers=headers or None)
