@@ -546,6 +546,12 @@ _P5B_KEYS = [
     ("UI_LANGUAGE",           "UI_LANGUAGE",           "str",  "auto",       True),
     # --- Connection ---
     ("PUBLIC_URL",            "PUBLIC_URL",            "str",  "",           True),
+    # --- Multi-file (merged) scenes (local fork) ---
+    # Advertise every file of a merged scene as its own selectable version;
+    # non-primary files are then served off disk rather than from Stash.
+    # Both are read per request, so they take effect without a restart.
+    ("MULTI_FILE_SCENES",     "MULTI_FILE_SCENES",     "bool", False,        True),
+    ("LIBRARY_PATH_MAP",      "LIBRARY_PATH_MAP",      "str",  "",           True),
     # --- Libraries (pass 4) ---
     ("GENRE_MODE",            "GENRE_MODE",            "str",  "parent_tag", False),
     ("GENRE_PARENT_TAG",      "GENRE_PARENT_TAG",      "str",  "GENRE",      False),

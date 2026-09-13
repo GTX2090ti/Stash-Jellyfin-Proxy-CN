@@ -445,6 +445,31 @@
           </div>
         </div>
 
+        <!-- Multi-File (merged) Scenes -->
+        <div class="card" data-section="multifile">
+          <div class="card-header">
+            <div class="card-title">Multi-File Scenes <span class="unsaved-dot hide"></span></div>
+          </div>
+          <div class="card-body">
+            <div class="field">
+              <div class="field-label">Advertise Every File as a Version</div>
+              <div class="toggle" data-key="MULTI_FILE_SCENES"></div>
+              <div class="field-help">Stash streams only a scene's primary file and exposes no endpoint for the others, so a merged scene silently plays one file. When enabled, each file becomes a selectable version in the player and the non-primary files are read straight off disk.</div>
+            </div>
+            <div class="field">
+              <div class="field-label">Library Path Map</div>
+              <input type="text" data-key="LIBRARY_PATH_MAP" placeholder="/data:/library">
+              <div class="field-help">Comma-separated stash-path:container-path pairs. Required by the switch above — the media library must be mounted into this container and the paths Stash reports have to be translated to paths this container can read. Left empty, or when a file is unreachable, playback falls back to the Stash stream.</div>
+            </div>
+          </div>
+          <div class="card-footer">
+            <span class="save-badge live" title="Read on every request — no restart needed.">
+              <span class="sb-dot"></span>Live
+            </span>
+            <button class="btn primary" data-save="multifile">Save</button>
+          </div>
+        </div>
+
       </div>
     </section>
 

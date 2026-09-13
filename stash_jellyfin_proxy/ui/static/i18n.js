@@ -273,6 +273,14 @@
     "Test a Scene Title": "测试场景标题",
     "S02:E05 — Some Episode": "S02:E05 — 某集标题",
     "Test": "测试",
+    "Multi-File Scenes": "多文件场景",
+    "Advertise Every File as a Version": "每个文件作为独立版本",
+    "Stash streams only a scene's primary file and exposes no endpoint for the others, so a merged scene silently plays one file. When enabled, each file becomes a selectable version in the player and the non-primary files are read straight off disk.":
+      "Stash 只串流场景的主文件，且未提供访问其它文件的接口，因此合并场景只会静默播放其中一个文件。开启后，每个文件都会成为播放器中可选的一个版本，非主文件由代理直接读盘提供。",
+    "Library Path Map": "媒体库路径映射",
+    "Comma-separated stash-path:container-path pairs. Required by the switch above — the media library must be mounted into this container and the paths Stash reports have to be translated to paths this container can read. Left empty, or when a file is unreachable, playback falls back to the Stash stream.":
+      "以逗号分隔的「Stash 路径:容器路径」映射对。上方开关依赖此项 —— 媒体库需挂载进本容器，并把 Stash 上报的路径翻译成本容器可读的路径。留空或文件不可达时，播放回退到 Stash 串流。",
+    "Read on every request — no restart needed.": "每次请求时读取，无需重启。",
     "Enter a title to test.": "请输入要测试的标题。",
     "✓ Matched pattern {n}: Season {s}, Episode {e}": "✓ 匹配第 {n} 条规则：第 {s} 季第 {e} 集",
     "✗ Pattern {n} invalid: {e}": "✗ 第 {n} 条规则无效：{e}",

@@ -63,6 +63,8 @@ ALLOW_UNTRANSLATED = {
     # Stash tag names and other operator data used as examples.
     "FAVORITE", "GENRE", "Series", "Playlists",
     "Tit Worship, JOI, Gooning", "The, A, An", "S02:E05 — Some Episode",
+    # Path mapping example: translating it would make the example wrong.
+    "/data:/library",
     # Sample URLs.
     "http://localhost:9999", "https://stash-sjs.example.com",
     "stash_jellyfin_proxy.conf",
