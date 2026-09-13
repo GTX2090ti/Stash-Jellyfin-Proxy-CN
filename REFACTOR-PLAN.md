@@ -1,6 +1,6 @@
 # Stash-Jellyfin-Proxy 重构方案
 
-> 面向交付/使用的说明文档见 [`docs/multifile-and-i18n.md`](docs/multifile-and-i18n.md)（多文件场景修复 + 界面汉化、部署形态、踩坑记录、变更清单）。
+> 面向交付/使用的说明文档见 [`MULTIFILE-AND-I18N.md`](MULTIFILE-AND-I18N.md)（多文件场景修复 + 界面汉化、部署形态、踩坑记录、变更清单）。
 >
 > 版本基线：`ef3d017`（upstream `feldorn/Stash-Jellyfin-Proxy`，v7.3.10 merge 之后）
 > 本地分支：`local/self-maintained`（自研改动已提交，`main` 保持上游干净态）
