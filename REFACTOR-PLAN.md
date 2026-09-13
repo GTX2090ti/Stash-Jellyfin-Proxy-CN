@@ -1,7 +1,9 @@
 # Stash-Jellyfin-Proxy 重构方案
 
+> 面向交付/使用的说明文档见 [`docs/multifile-and-i18n.md`](docs/multifile-and-i18n.md)（多文件场景修复 + 界面汉化、部署形态、踩坑记录、变更清单）。
+>
 > 版本基线：`ef3d017`（upstream `feldorn/Stash-Jellyfin-Proxy`，v7.3.10 merge 之后）
-> 本地分支：`main`（**工作区改动尚未提交**，见 §6 风险）
+> 本地分支：`local/self-maintained`（自研改动已提交，`main` 保持上游干净态）
 > 关键词：自研实现替换、多文件场景（Merge）支持、配置界面中英双语
 
 ---
@@ -186,17 +188,18 @@ config/bootstrap.py   │  环境变量 > 配置文件
 | 项 | 默认 | 说明 |
 |---|---|---|
 | `MULTI_FILE_SCENES` | `false` | 开启后，含多文件的场景会暴露多个版本 |
-| `LIBRARY_PATH_MAP` | `""` | 逗号分隔的 `stash_path:container_path`，如 `/vol1/1000/HS1/PT:/library` |
+| `LIBRARY_PATH_MAP` | `""` | 逗号分隔的 `stash_path:container_path`，如 `/data:/library` |
+
+> ⚠️ **左边是「Stash 上报的路径」，不是宿主路径。** Stash 自己把 `/vol1/1000/HS1` 挂成 `/data`，因此它上报 `/data/PT/...`；本容器把同一棵树挂成 `/library`，映射才是 `/data:/library`。写成宿主的 `/vol1/1000/HS1/PT:/library` 是**不匹配**的 —— 会静默回退且日志无报错。真实前缀从 Stash 的 GraphQL 读一条 `files { path }` 即可确认。
 
 需要同时给容器挂载只读卷：
 
 ```yaml
 volumes:
-  - /vol1/1000/HS1/PT:/library:ro
+  - /vol1/1000/HS1:/library:ro        # 挂载点与 Stash 自身一致
 environment:
   - MULTI_FILE_SCENES=true
-  - LIBRARY_PATH_MAP=/vol1/1000/HS1/PT:/library
-```
+  - LIBRARY_PATH_MAP=/data:/library   # Stash 容器内路径 : 本容器内路径
 
 启动日志会打印实际生效值，未配映射时会明确提示「non-primary files will fall back to the Stash stream」。
 
@@ -249,19 +252,19 @@ config-UI language e2e HTTP test: 41 passed, 0 failed
 
 ## 6. 风险与后续建议
 
-### 6.1 ⚠️ 当前改动未提交（最高优先）
+### 6.1 ✅ 已提交到自研分支（2026-09-13）
 
-工作区有 **16 个修改 + 4 个新增**，`git log` 仍停在 `ef3d017`，**没有任何提交**。这意味着一次误操作的 `git checkout` / `git pull` / 重装都可能**不可逆地丢掉全部自研实现**。
-
-建议立刻落到本地分支，保住工作成果：
+原本 23 个改动 + 4 个新增全部散在工作区、`HEAD` 停在 `ef3d017`，一次误操作的 `git checkout` 就能不可逆丢掉。现已落到独立分支：
 
 ```bash
-git switch -c local/self-maintained      # 自研改动独立成支，main 保留 upstream 干净态
-git add -A
-git commit -m "feat: multi-file scene support (own impl) + zh-CN config UI"
+git switch -c local/self-maintained
+# dc0989d  feat: own multi-file scene implementation + zh-CN config UI
+# 7f94f4e  feat(ui): expose the multi-file scene knobs in the config UI
+# efce417  fix(multi-file): non-ASCII filenames broke the stream response
+# d346fa6  test: cover local_media path mapping and Content-Disposition encoding
 ```
 
-好处：`main` 仍是 upstream 原样，日后同步上游只需 `git fetch && git rebase origin/main`，冲突集中在自己的补丁里。
+`main` 仍是 upstream 干净态（`ef3d017`），日后同步上游只需 `git fetch && git rebase origin/main`，冲突集中在自己的补丁里。提交用内联 `-c user.name=... -c user.email=...`，没有写进本地或全局 git 配置。
 
 ### 6.2 上游同步风险
 
@@ -274,4 +277,78 @@ git commit -m "feat: multi-file scene support (own impl) + zh-CN config UI"
 - **同形异义**：同一英文串全局只有一种译法。新遇到冲突时用 `data-i18n-skip-attrs`（属性）或 `data-i18n-skip`（子树）显式退出。
 - **`innerHTML` 区域**：依赖 app.js 自己调 `t()`。新写的动态渲染若忘了调 `t()`，界面会混入英文，但 `i18n_audit.py` 会因「`t()` 键缺失」或「目录死键」暴露出来（取决于写法）。
 - **语言支持范围**：仅 `en` / `zh`。新增语种只需在 `i18n.js` 里加一份目录 + 在 `SUPPORTED` / `PRECISIONS` / 切换器里加一项，检查 E 会强制三者对齐。
-- **自动化覆盖到哪、没到哪**：服务端注入链路已用 `TestClient` 走真实 HTTP 验证；翻译引擎已用 DOM 桩验证行为。**没验证的是两件必须在真环境做的事**：① 真实浏览器里的最终视觉（尤其 `innerHTML` 区域的动态文案，属 app.js 调用点覆盖问题，静态检查只能保证「调用了 `t()`」，不能保证「视觉正确」）；② `MULTI_FILE_SCENES` 的真实播放（需媒体目录已挂载进容器）。首次部署后请执行 §5 的人工验收。
+- **自动化覆盖到哪、没到哪**：服务端注入链路已用 `TestClient` 走真实 HTTP 验证；翻译引擎已用 DOM 桩验证行为。**没验证的是**：真实浏览器里的最终视觉（尤其 `innerHTML` 区域的动态文案，属 app.js 调用点覆盖问题，静态检查只能保证「调用了 `t()`」，不能保证「视觉正确」）。多文件场景已于 2026-09-13 在飞牛 NAS 真机验证通过，见 §7。
+
+---
+
+## 7. 部署实况（2026-09-13，飞牛 NAS）
+
+### 7.1 部署形态：目录挂载覆盖镜像内置包
+
+不改镜像，用 bind mount 把整个包目录覆盖掉：
+
+```yaml
+volumes:
+  - /vol2/1000/HSX/docker/stash-jellyfin-proxy:/config
+  - /vol2/1000/HSX/docker/stash-jellyfin-proxy/app:/app/stash_jellyfin_proxy   # 自研代码
+  - /vol1/1000/HS1:/library:ro                                                # 媒体库
+```
+
+三个关键约束（都已踩过验证）：
+
+| 约束 | 原因 |
+|---|---|
+| `/app/stash_jellyfin_proxy` 必须 **rw** | `docker-entrypoint.sh` 每次启动执行 `chown -R ${PUID}:${PGID} /app`，脚本带 `set -e`，只读挂载会让 chown 失败并**直接中断启动** |
+| 媒体库挂载点必须与 Stash 的挂载**完全一致** | Stash 自己把 `/vol1/1000/HS1` 挂成 `/data`，所以它上报的路径是 `/data/PT/...`；本容器也挂成 `/library`，`LIBRARY_PATH_MAP=/data:/library` 才是同构映射。当初按宿主路径 `/vol1/1000/HS1/PT` 去猜是错的 |
+| 部署前必须核对容器内是否已有手改 | 原部署在 compose 里单独挂了一个手改的 `views.py`（客户端侧媒体库名汉化）。整体覆盖目录会**静默回退**这项改动 —— 已合并进 `endpoints/views.py` 后统一由自研树提供 |
+
+回滚 = 把 `_backup/<ts>/app.prev` 换回 `app/` + `docker compose up -d`，秒级完成，不用重建镜像。
+
+### 7.2 部署流程（可重复执行）
+
+部署工具在**工作区级** `dev-tools/`（不是仓库内的 `sjp/dev-tools/`）：
+
+```
+dev-tools/
+  nas_exec.py              # 把本地脚本上传到 /tmp 再执行，输出落盘
+  nas_get.py               # 从 NAS 取文件（用于 diff 容器内手改）
+  build_deploy_bundle.py   # 打包 sjp/stash_jellyfin_proxy -> deploy/app.tar.gz + sha256 清单
+  nas-scripts/
+    01-recon-stash.sh           # Stash 上报路径前缀 / 找出真实多文件场景
+    02-recon-container.sh       # 容器内是否另有手改（docker diff + CJK 扫描）
+    03-recon-content-diff.sh    # 与镜像逐文件比 md5，排除「只是 mtime 变了」的假阳性
+    10-install-code.sh          # 备份 + 解包 + sha256 校验 + 同文件系统 rename 换树
+    11-apply-config.sh          # 写 compose（含 docker compose config -q 校验）
+    13-fix-conf-scope.sh        # 修正键作用域，并用应用自身 loader 证明
+    12-restart-verify.sh        # 重建容器 + 21 项端到端断言
+    16-final-state.sh           # 汇总部署后状态
+```
+
+校验强度：本地打包时算 sha256 清单 → NAS 上 `sha256sum -c` 逐文件比对，**58/58 通过**才换树。文件数先与镜像内的文件集合比对过（镜像 53 个 `.py` 一个不缺，只多出新增的 `util/local_media.py`），避免整体覆盖时丢掉上游模块。
+
+### 7.3 真机验证结果（21/21 通过）
+
+| 断言 | 结果 |
+|---|---|
+| 启动日志 `Multi-file scenes: enabled (library path map: /data:/library)` | ✅ |
+| `/api/config` → `MULTI_FILE_SCENES=True` / `LIBRARY_PATH_MAP=/data:/library` | ✅ |
+| `/api/status` → `uiLanguage=auto` | ✅ |
+| 配置界面含 `i18n.js` + 语言切换器，**无残留 `{{占位符}}`** | ✅ |
+| `/UserViews` 返回 `["场景","厂商","演员","分组","播放列表"]`（手改汉化未丢） | ✅ |
+| `scene-13`（2 文件）`PlaybackInfo` → **2 个 MediaSource**：`scene-13` + `scene-13-f751`(4K HEVC) | ✅ |
+| `scene-14`（单文件）→ 1 个 MediaSource（无回归） | ✅ |
+| **非主文件串流** `GET /Videos/scene-13-f751/stream` Range 0-1023 → **206 / 1024 字节**，带 `accept-ranges` + `content-range: bytes 0-1023/3035622018` | ✅ |
+| 重启后日志无 traceback | ✅ |
+
+### 7.4 两个只有真机会暴露的坑（已修）
+
+**① 配置文件不是扁平的 `KEY=value`。** `.conf` 用了 INI 式 `[player.xxx]` 节作用域（见 `config/loader.py`），而 player 节在文件末尾。把新键**追加到文件末尾**会落进 `[player.default]` 节，应用读不到、静默用默认值 —— 表面 `GET /api/config` 一切正常，实际 `MULTI_FILE_SCENES` 仍是 `False`，多文件场景照旧只播一个文件，且**不报任何错**。修法是插到第一个 `[` 之前，并用应用自己的 `load_config()` 验证键落在 global 作用域、`player.*` 节零泄漏。
+
+**② HTTP 头是 latin-1，文件名带 CJK 会炸。** 非主文件由代理直读磁盘后，`local_file_response` 把 basename 原样塞进 `Content-Disposition`；日文文件名在 ASGI 发响应阶段抛 `UnicodeEncodeError`，客户端只看到 **500 空体**，而日志里**连 traceback 都没有**（只有一行 `ERROR ... 'latin-1' codec can't encode...`），因为路径映射和读盘其实都已经成功了。改为同时输出 RFC 6266 的 ASCII 回退名 + RFC 5987 的 `filename*=UTF-8''` 百分号编码名。已加 `tests/unit/test_local_media.py`（22 项）钉死，含此前完全无覆盖的路径映射行为。
+
+### 7.5 运维注意
+
+- **重启（含重建）约需 95–100 秒**才对外服务：启动阶段要先对 2300+ 场景的 Stash 解析媒体库计数，之后才 listen。期间客户端会连不上，属正常。
+- 打包环境是 Python 3.13、镜像是 3.11，已用 `ast.parse(..., feature_version=(3,11))` 全包扫过语法兼容性。
+- 宿主 `8096` 与 Jellyfin 默认端口冲突，两者不能同时监听（原注释已保留）。
+- `_backup/` 下 7 个时间点备份、`docker-compose.yml.bak-*` 均保留；根目录的 `views.py` / `views.py.bak` 已不再被 compose 引用（内容已并入 `app/endpoints/views.py`），留作历史备份。
