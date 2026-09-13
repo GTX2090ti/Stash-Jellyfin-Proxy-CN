@@ -393,7 +393,9 @@ sections present   : ['player.default', 'player.infuse', 'player.roku', 'player.
 
 ## 7. 变更清单
 
-### 7.1 涉及文件（相对上游 `ef3d017`，24 文件 / +2888 −127）
+### 7.1 涉及文件
+
+相对上游 `ef3d017` 共 **25 文件 / +3475 −127**（其中代码 24 文件 / +2888 −127，另加本文与 `REFACTOR-PLAN.md`）。
 
 **A. 协议层 —— 多文件场景（替换 upstream 行为）**
 
@@ -431,12 +433,16 @@ sections present   : ['player.default', 'player.infuse', 'player.roku', 'player.
 ### 7.2 提交（分支 `local/self-maintained`）
 
 ```text
+92b305f  docs: track the write-up at the repo root, not in gitignored /docs/
+7a3a694  docs: write up the multi-file fix and the zh-CN UI
 d346fa6  test: cover local_media path mapping and Content-Disposition encoding
 efce417  fix(multi-file): non-ASCII filenames broke the stream response
 7f94f4e  feat(ui): expose the multi-file scene knobs in the config UI
 dc0989d  feat: own multi-file scene implementation + zh-CN config UI
 ef3d017  ← main 仍停在这里（upstream 干净态）
 ```
+
+> 文档为什么放在仓库根而不是 `docs/`：上游 `.gitignore` 第 60 行忽略了 `/docs/`（注释为「private design docs」），放在那里的文件会被 `git add -A` **静默跳过**。这与正文 §6 记录的几处「静默失败」是同一种毛病，所以本文件与 `REFACTOR-PLAN.md` 同级放置。
 
 `main` 保持上游原样，日后同步上游只需 `git fetch && git rebase origin/main`，冲突集中在自己补丁里。
 
