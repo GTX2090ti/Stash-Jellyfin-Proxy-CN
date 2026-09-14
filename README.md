@@ -1,99 +1,150 @@
-# Stash-Jellyfin Proxy
+# Stash-Jellyfin 代理（Stash-Jellyfin Proxy）
 
-**Version 7.3.10**
+**版本 7.3.10**（CN 自研分支，基于上游 `feldorn/Stash-Jellyfin-Proxy` v7.3.10）
 
-A Python proxy server that lets Jellyfin-compatible media players browse and stream a [Stash](https://stashapp.cc/) library by emulating the Jellyfin HTTP API.
+一个 Python 代理服务器，通过模拟 Jellyfin 的 HTTP API，让兼容 Jellyfin 的媒体播放器能够浏览并播放 [Stash](https://stashapp.cc/) 媒体库。
 
-## Supported Clients
+> **关于本仓库（CN 分支）**：这是在原版基础上加入自研功能的中文发行版。相对上游新增了
+> **多文件（合并）场景播放**、**配置界面中英双语**、**元数据刮削管线（含 Stash Box）**三大能力，
+> 并已包含客户端侧媒体库名汉化。详见下方[「本分支新增功能」](#本分支新增功能相对上游-v7310)。
+> 英文原版 README 见 [README.en.md](README.en.md)。
 
-The proxy is designed for **dedicated Jellyfin-compatible media players**. The official Jellyfin iOS / iPadOS / Android apps are intentionally unsupported — they load the server's web UI in a WebView and require a `jellyfin-web` bundle the proxy doesn't ship.
+## 支持的客户端
 
-| Client     | Platform           | Status            |
-|------------|--------------------|-------------------|
-| Infuse     | iOS / tvOS / macOS | Fully supported   |
-| Swiftfin   | iOS / tvOS         | Fully supported   |
-| SenPlayer  | iOS                | Fully supported   |
-| Other Jellyfin-compatible third-party players | Various | May work; untested |
+该代理专为**专用的兼容 Jellyfin 的媒体播放器**设计。官方 Jellyfin iOS / iPadOS / Android 应用**有意不支持**——它们会在 WebView 中加载服务器自带的 Web UI，而代理并不附带 `jellyfin-web` 这个前端包。
 
-Per-client behavior (poster aspect, performer item type, library `CollectionType` for Series) is selected automatically by User-Agent and is fully configurable via the **Players** tab in the Web UI.
+| 客户端 | 平台 | 状态 |
+| --- | --- | --- |
+| Infuse | iOS / tvOS / macOS | 完全支持 |
+| Swiftfin | iOS / tvOS | 完全支持 |
+| SenPlayer | iOS | 完全支持 |
+| 其他第三方兼容 Jellyfin 的播放器 | 多种 | 可能可用；未经测试 |
 
-## Features
+各客户端的差异行为（海报宽高比、演员项的类型、用于剧集的库 `CollectionType`），都会根据 User-Agent 自动选择，并可在网页界面的**播放器（Players）**标签页中完全自定义。
 
-### Library
-- **Full Stash integration**: Scenes, Performers, Studios, Groups, Tags
-- **Series detection**: studios tagged with `SERIES_TAG` (default `Series`) become a `Shows` library — Swiftfin renders native Series → Season → Episode navigation; other clients see a regular collection of "shows" (configurable per-profile)
-- **Playlists**: full create / rename / add / remove / delete from clients that expose playlist UI (Infuse, Jellyfin web). Backed by a Stash parent tag (`PLAYLIST_PARENT_TAG`, default `Playlists`) — each child tag is one playlist, its tagged scenes are its items. Swiftfin and SenPlayer get a read-only `BoxSet`-shaped view (their UI doesn't render the native Playlist type)
-- **Tag-based libraries** (`TAG_GROUPS`): any Stash tag can become a top-level browsable folder
-- **Saved Filters**: browse your Stash saved filters as folders, with sort parameters translated to GraphQL
-- **Configurable Genres**: three modes for what shows up under "Genres" — every tag (`all_tags`), only descendants of a parent tag (`parent_tag`, default), or the top-N by scene count (`top_n`)
-- **Filter panel** (Swiftfin): Years, Genres, Tags, Liked, Played — with hierarchy-aware tag filtering (depth: -1) and AND/OR genre logic
-- **Per-library default sort**: separate defaults for Scenes / Studios / Performers / Groups / Tag Groups / Saved Filters when the client doesn't specify one
+## 本分支新增功能（相对上游 v7.3.10）
 
-### Playback
-- **Direct streaming** via async `httpx` with byte-range forwarding — no buffering layer
-- **Subtitles**: SRT and VTT delivered from Stash captions
-- **Rich metadata**: codec details, resolution, bitrate, frame rate, channel layout, container, video type
-- **Play / resume / watched sync**: read from and written back to Stash. Scenes >90% watched are auto-marked played; otherwise resume position is saved
+### ① 多文件（合并）场景播放
 
-### Imagery
-- **Aspect-aware image endpoint**: real portrait crops with configurable anchor (`POSTER_CROP_ANCHOR`); landscape sources are padded or cropped to the requested aspect rather than squashed
-- **Per-client poster format**: each player profile picks portrait vs landscape posters and the performer item type (`Person` vs custom)
-- **Library tiles**: scene-screenshot tiles with a 50% dim + label overlay; the same composite is applied to TAG_GROUPS folders
-- **Studio logo fallback**: scenes inside SERIES studios prefer the parent studio's logo over the scene screenshot
-- **Cache-busting `ImageTag`**: per-process tag rotation forces native clients (which key images by `(ItemId, ImageTag)`) to refresh on restart
+在 Stash 里把多个文件合并进一个场景后，上游只下发主文件——这是 **Stash 侧的硬限制**（流式路由硬编码 `scene.Files.Primary()`），不是代理的 bug。本分支绕过 Stash 流接口实现完整支持：
 
-### Home / Hero / Banner
-- **Configurable hero source**: `recent` / `random` / `favorites` / `top_rated` / `recently_watched`
-- **SenPlayer banner**: random scenes (with screenshots) drive SenPlayer's rotating home banner — choose a `recent` or `tag`-based pool
+- `/PlaybackInfo` 为场景的**每个文件**下发独立 `MediaSource`，客户端自动出现版本选择器（文件名 / 分辨率作为版本名），无需任何自定义 UI
+- 复合媒体源 ID（如 `scene-13-f751`），客户端回传 `MediaSourceId` 即可精确定位文件
+- 非主文件由代理**直读磁盘**（`FileResponse`，自带 `206` / `Content-Range` / `Accept-Ranges`——拖进度条、跳转正常），主文件仍走 Stash 原生流，**零回归**
+- 默认关闭，需同时配置 `MULTI_FILE_SCENES=true` 与 `LIBRARY_PATH_MAP`；映射为空或文件不可读时**自动静默回退**到 Stash 原生流，最差等于没开
+- ⚠️ `LIBRARY_PATH_MAP` 左边必须写 **Stash 自己上报的路径前缀**（不是宿主挂载路径），左不匹配则静默回退且日志无报错——启动日志的 `Multi-file scenes: enabled (library path map: ...)` 是唯一生效判据
 
-### Favorites
-- **Scenes** and **Groups**: tag-based via `FAVORITE_TAG` (auto-created in Stash on first toggle, case-insensitive match against existing tags). `movieUpdate` mutation under the hood for groups.
-- **Performers**: native Stash `favorite` boolean
-- **Studios**: `studioUpdate` mutation
-- All favorite toggles return a full `UserItemDataDto` so client UI reconciles correctly without a navigation round-trip.
+详细方案、部署形态、踩坑记录见 [MULTIFILE-AND-I18N.md](MULTIFILE-AND-I18N.md)。
 
-### Web UI (port 8097)
-8-tab configuration dashboard — every config key is reachable in the UI, no more hand-editing the conf file:
+### ② 配置界面中英双语
 
-- **Dashboard** — proxy + Stash status, active streams, lifetime stats, recent log tail
-- **Connection** — Stash URL / API key / GraphQL path / TLS, client credentials, with a live Test Connection probe
-- **Libraries** — TAG_GROUPS, LATEST_GROUPS, Genres mode, Series detection (with regex tester for episode parsing)
-- **Players** — live User-Agent feed of recent clients + a profile editor for per-client image policy
-- **Playback** — hero source, default sort per library, banner mode
-- **Search** — scope toggles (scenes / performers / studios / groups), filter panel limits and logic
-- **System** — server identity, performance (timeouts, page sizes, image cache size), logging, security (auth + IP banning), restart control
-- **Logs** — filterable viewer with download and Copy button
+配置网页（端口 8097）的 8 个标签页全部支持中英切换：
 
-### Operations
-- **Hot config reload** via SIGHUP — Web UI saves rewrite the conf file in place and reload without dropping connections
-- **v1 → v2 config migration** runs once on startup; old configs are auto-upgraded with a UI banner summarizing what changed
-- **IP banning** for failed auth attempts (configurable threshold + rolling window)
-- **Stream tracking** — every active stream visible in the Dashboard
-- **Persisted stats** — proxy_stats.json tracks lifetime counts across restarts
-- **Docker** — single image with PUID/PGID + TZ; published to GHCR on every `main` push
+- 侧边栏左下角 `AUTO / 中文 / EN`（只影响当前浏览器，存 `localStorage`）；或 系统 → Interface Language（整个实例的默认值，写入配置 `UI_LANGUAGE`）
+- 语言优先级：本机切换器 > 服务端 `UI_LANGUAGE` > 浏览器语言 > 英文
+- 实现为 gettext 风格的「英文原串作键 + 运行时 DOM 走查」（zh-CN 目录 387 条），模板零标注改动；**协议层一行未动**——Jellyfin 客户端收到的响应不含中文，切换语言不影响播放与元数据
+- 附 `dev-tools/i18n_audit.py` 五项静态门禁（覆盖度 / 调用点 / 死键 / 占位符 / 接线）
 
-## Quick Start
+### ③ 元数据刮削管线（社区刮削器 + Stash Box）
 
-### Standalone
+打通手机 App 的「Identify / 刷新元数据」：Jellyfin 客户端发起的识别请求由代理桥接到 Stash 的刮削能力，结果写回 Stash。
 
-Requires **Python 3.10+**.
+- **三类入口全支持**：按名搜索（provider=all 或指定刮削器 / 指定 Stash Box）、纯数字编号（自动路由到 URL 模板）、URL 直刮
+- **数字编号多形态路由**：一个刮削器可声明多个 URL 形态（`|` 分隔）。默认含 `fantiajp=https://fantia.jp/posts/{id}|https://fantia.jp/products/{id}`——Fantia 的 `/posts/<id>` 与 `/products/<id>` 是**共用同一编号的不同对象**，两边都返回 200，两个形态都试
+- **相关性排序替代先到者胜**：扇出等待全部定向命中，按「条目自身文件名 / 标题词」与候选的 token 重叠排序（含 camelCase 拆词，`LyaCutie` 能匹配 `Lya Cutie`），匹配形态置顶、其余结果保留但降级（上限 3 组）；同源 URL 去重
+- **Stash Box 接入**：`source {stash_box_index}` 直查已配置的 StashDB / ThePornDB 等 box；文件名自动归一化为演员查询（`0541-LyaCutie-2160p` → `Lya Cutie`，丢弃集数 / 分辨率 token）；Identify 里 provider 填 `StashDB` / `ThePornDB` 可单查某个 box
+- 新增 `endpoints/metadata.py`；267 项单元测试；真机验证：Fantia `1006291` → 商品 `buena-320` 置顶（帖子降级第二）、`0541-LyaCutie-2160p` 识别从 **0 条 → 10 条**
+
+刮削配置键见[「配置」](#元数据刮削)一节；完整排障记录见 [SCRAPING-NOTES.md](SCRAPING-NOTES.md)。
+
+### ④ 客户端侧媒体库名汉化
+
+Jellyfin 客户端里看到的库分类名（场景 / 厂商 / 演员 / 分组 / 播放列表）已汉化，改动并入 `endpoints/views.py`，随本分支统一分发（上游以英文常量硬编码）。
+
+## 功能特性
+
+### 媒体库
+
+- **完整的 Stash 集成**：场景（Scenes）、演员（Performers）、制片商（Studios）、合集（Groups）、标签（Tags）
+- **剧集识别**：带有 `SERIES_TAG`（默认 `Series`）标签的制片商会被当作 `Shows`（影视剧）库——Swiftfin 可渲染原生的「剧集 → 季 → 单集」导航；其他客户端则会看到一个普通的「剧集」合集（可按配置档自定义）
+- **播放列表**：在暴露播放列表 UI 的客户端（Infuse、Jellyfin Web）上支持完整的创建 / 重命名 / 添加 / 删除操作。底层由 Stash 的一个父标签（`PLAYLIST_PARENT_TAG`，默认 `Playlists`）支撑——每个子标签就是一份播放列表，被该标签标记的场景即为其条目。Swiftfin 和 SenPlayer 会获得只读的 `BoxSet` 形状视图（它们的界面无法渲染原生的 Playlist 类型）
+- **基于标签的媒体库**（`TAG_GROUPS`）：任何 Stash 标签都可以成为一个顶层可浏览文件夹
+- **已保存筛选器（Saved Filters）**：将你 Stash 中已保存的筛选器作为文件夹浏览，排序参数会翻译成 GraphQL
+- **可配置的流派（Genres）**：「流派」下显示什么有三种模式——每个标签（`all_tags`）、仅父标签的后代（`parent_tag`，默认）、或按场景数量取前 N 个（`top_n`）
+- **筛选面板**（Swiftfin）：年份、流派、标签、已喜欢、已播放——支持感知层级的标签筛选（深度：-1）以及 AND/OR 流派逻辑
+- **每个媒体库默认排序**：当客户端未指定排序时，分别为场景 / 制片商 / 演员 / 合集 / 标签组 / 已保存筛选器设置各自的默认值
+
+### 播放
+
+- **直接串流**：通过异步 `httpx` 并转发字节区间（byte-range）——没有缓冲层
+- **字幕**：从 Stash 字幕中提取 SRT 与 VTT 格式
+- **丰富的元数据**：编解码器详情、分辨率、码率、帧率、声道布局、封装格式、视频类型
+- **播放 / 续播 / 已看同步**：从 Stash 读取并写回。观看进度超过 90% 的场景会自动标记为已看；否则保存续播位置
+
+### 图片
+
+- **感知宽高比的图像接口**：真实的竖版裁切并带可配置的锚点（`POSTER_CROP_ANCHOR`）；横向图源会按请求的比例进行留边或裁切，而非被压扁变形
+- **按客户端的海报格式**：每个播放器配置档可选择竖版或横版海报，以及演员项的类型（`Person` 还是自定义）
+- **媒体库磁贴**：场景截图磁贴带 50% 变暗 + 标签叠加；同样的合成效果也应用于 TAG_GROUPS 文件夹
+- **制片商 Logo 兜底**：SERIES 制片商内的场景优先使用父制片商的 Logo，而非场景截图
+- **防缓存的 `ImageTag`**：按进程轮换标签，强制原生客户端（以 `(ItemId, ImageTag)` 作为图片键）在重启时刷新
+
+### 首页 / 焦点图 / 横幅
+
+- **可配置的焦点图来源**：`recent`（最近）/ `random`（随机）/ `favorites`（收藏）/ `top_rated`（高分）/ `recently_watched`（最近观看）
+- **SenPlayer 横幅**：随机场景（带截图）驱动 SenPlayer 轮播的首页横幅——可选择 `recent` 或基于 `tag` 的池
+
+### 收藏
+
+- **场景**与**合集**：基于标签，通过 `FAVORITE_TAG` 实现（首次切换时在 Stash 中自动创建，对现有标签大小写不敏感匹配）。合集底层使用 `movieUpdate` 变更
+- **演员**：使用 Stash 原生的 `favorite` 布尔值
+- **制片商**：`studioUpdate` 变更
+- 所有收藏切换都返回完整的 `UserItemDataDto`，便于客户端 UI 正确对账，无需来回导航
+
+### 网页界面（端口 8097）
+
+8 标签页配置面板——每个配置项都可在界面中触达，不再需要手动编辑配置文件：
+
+- **仪表盘（Dashboard）**——代理 + Stash 状态、活动串流、累计统计、最近日志尾
+- **连接（Connection）**——Stash URL / API 密钥 / GraphQL 路径 / TLS、客户端凭据，含实时「测试连接」探针
+- **媒体库（Libraries）**——TAG_GROUPS、LATEST_GROUPS、流派模式、剧集识别（含用于解析单集的 regex 测试器）
+- **播放器（Players）**——最近客户端的实时 User-Agent 反馈 + 按客户端的图片策略配置档编辑器
+- **播放（Playback）**——焦点图来源、各库默认排序、横幅模式
+- **搜索（Search）**——范围开关（场景 / 演员 / 制片商 / 合集）、筛选面板限制与逻辑
+- **系统（System）**——服务器标识、性能（超时、分页大小、图片缓存大小）、日志、安全（认证 + IP 封禁）、重启控制
+- **日志（Logs）**——可筛选的查看器，含下载与复制按钮
+
+### 运维
+
+- **热配置重载**：通过 SIGHUP 信号——网页界面保存会就地重写配置文件并重载，且不丢弃连接
+- **v1 → v2 配置迁移**：启动时运行一次；旧配置自动升级，并在界面上以横幅提示变更摘要
+- **IP 封禁**：针对认证失败尝试（可配置阈值 + 滚动窗口）
+- **串流追踪**：每个活动串流在仪表盘中可见
+- **持久化统计**：proxy_stats.json 跨重启记录累计计数
+- **Docker**——单镜像，带 PUID/PGID + TZ；每次向 `main` 推送都会发布到 GHCR
+
+## 快速开始
+
+### 独立运行
+
+需要 **Python 3.10+**。
 
 ```bash
 pip install hypercorn starlette httpx Pillow setproctitle
 python -m stash_jellyfin_proxy
 ```
 
-Or, after `pip install -e .`:
+或者，在 `pip install -e .` 之后：
 
 ```bash
 stash-jellyfin-proxy
 ```
 
-Then:
+然后：
 
-1. Open the Web UI at `http://localhost:8097`
-2. Fill in `STASH_URL`, `STASH_API_KEY`, `SJS_USER`, `SJS_PASSWORD` on the Connection tab
-3. Add the server in your Jellyfin client at `http://your-server:8096`
+1. 在 `http://localhost:8097` 打开网页界面
+2. 在连接（Connection）标签页填写 `STASH_URL`、`STASH_API_KEY`、`SJS_USER`、`SJS_PASSWORD`
+3. 在你的 Jellyfin 客户端中以 `http://your-server:8096` 添加该服务器
 
 ### Docker
 
@@ -109,65 +160,95 @@ docker run -d \
   ghcr.io/feldorn/stash-jellyfin-proxy:latest
 ```
 
-Image entrypoint runs `python -m stash_jellyfin_proxy` against `/config/stash_jellyfin_proxy.conf`.
+镜像入口点针对 `/config/stash_jellyfin_proxy.conf` 运行 `python -m stash_jellyfin_proxy`。
 
-## Configuration
+## 配置
 
-`stash_jellyfin_proxy.conf` location: working directory by default, or set via `CONFIG_FILE` env var or `--config /path/to.conf`. The Web UI rewrites this file in place.
+`stash_jellyfin_proxy.conf` 位置：默认在当前工作目录，或通过 `CONFIG_FILE` 环境变量或 `--config /path/to.conf` 设置。网页界面会就地重写该文件。
 
-The full list lives in the conf file and the Web UI; the most common keys:
+完整列表位于配置文件与网页界面中；以下是常用配置项：
 
-### Connection
-| Key | Default | Description |
-|---|---|---|
-| `STASH_URL` | `http://localhost:9999` | Stash server URL |
-| `STASH_API_KEY` | *(required)* | from Stash → Settings → Security |
-| `STASH_GRAPHQL_PATH` | `/graphql` | use `/graphql-local` if Stash sits behind a SWAG reverse proxy |
-| `STASH_VERIFY_TLS` | `false` | set `true` if Stash has a real cert |
-| `SJS_USER` / `SJS_PASSWORD` | *(required)* | client login |
-| `PROXY_PORT` | `8096` | Jellyfin API port |
-| `UI_PORT` | `8097` | Web UI port (`0` to disable) |
+### 连接（Connection）
 
-### Library
-| Key | Default | Description |
-|---|---|---|
-| `TAG_GROUPS` | empty | comma-separated tags shown as top-level folders |
-| `LATEST_GROUPS` | `Scenes` | which folders feed Infuse "Recently Added" |
-| `FAVORITE_TAG` | empty | tag used for scene + group favorites (e.g. `Favorite`) |
-| `SERIES_TAG` | `Series` | studios tagged with this become Series libraries |
-| `SERIES_EPISODE_PATTERNS` | empty | newline-separated regex chain for parsing `S##E##` from titles |
-| `PLAYLIST_PARENT_TAG` | `Playlists` | parent tag whose direct children become Jellyfin playlists. Empty disables the feature |
-| `ENABLE_FILTERS` | `true` | show Saved Filters folder |
-| `ENABLE_TAG_FILTERS` | `false` | show Tags root folder |
-| `ENABLE_ALL_TAGS` | `false` | include "All Tags" subfolder (slow with many tags) |
+| 键 | 默认值 | 说明 |
+| --- | --- | --- |
+| `STASH_URL` | `http://localhost:9999` | Stash 服务器 URL |
+| `STASH_API_KEY` | *(必填)* | 来自 Stash → 设置 → 安全 |
+| `STASH_GRAPHQL_PATH` | `/graphql` | 若 Stash 位于 SWAG 反向代理之后，使用 `/graphql-local` |
+| `STASH_VERIFY_TLS` | `false` | 若 Stash 有真实证书，设为 `true` |
+| `SJS_USER` / `SJS_PASSWORD` | *(必填)* | 客户端登录凭据 |
+| `PROXY_PORT` | `8096` | Jellyfin API 端口 |
+| `UI_PORT` | `8097` | 网页界面端口（`0` 表示禁用） |
 
-### Genres / Filter panel
-| Key | Default | Description |
-|---|---|---|
+### 媒体库（Library）
+
+| 键 | 默认值 | 说明 |
+| --- | --- | --- |
+| `TAG_GROUPS` | 空 | 以逗号分隔的标签，作为顶层文件夹显示 |
+| `LATEST_GROUPS` | `Scenes` | 哪些文件夹供给 Infuse 的「最近添加」 |
+| `FAVORITE_TAG` | 空 | 用于场景 + 合集收藏的标签（例如 `Favorite`） |
+| `SERIES_TAG` | `Series` | 带有此标签的制片商会变成剧集库 |
+| `SERIES_EPISODE_PATTERNS` | 空 | 以换行分隔的正则链，用于从标题解析 `S##E##` |
+| `PLAYLIST_PARENT_TAG` | `Playlists` | 父标签，其直接子标签成为 Jellyfin 播放列表。留空则禁用该功能 |
+| `ENABLE_FILTERS` | `true` | 显示「已保存筛选器」文件夹 |
+| `ENABLE_TAG_FILTERS` | `false` | 显示「标签」根文件夹 |
+| `ENABLE_ALL_TAGS` | `false` | 包含「所有标签」子文件夹（标签多时较慢） |
+| `MULTI_FILE_SCENES` | `false` | 开启后合并场景的每个文件作为独立版本下发（见「本分支新增功能 ①」） |
+| `LIBRARY_PATH_MAP` | 空 | 逗号分隔的 `Stash上报路径:容器内路径` 对，供非主文件磁盘直读用 |
+
+### 流派 / 筛选面板
+
+| 键 | 默认值 | 说明 |
+| --- | --- | --- |
 | `GENRE_MODE` | `parent_tag` | `all_tags` / `parent_tag` / `top_n` |
-| `GENRE_PARENT_TAG` | `GENRE` | parent tag whose descendants become Genres |
-| `GENRE_TOP_N` | `25` | for `top_n` mode |
-| `FILTER_TAGS_MAX` | `50` | max entries per dimension in `/Items/Filters` |
-| `GENRE_FILTER_LOGIC` | `AND` | `AND` (INCLUDES_ALL) or `OR` (INCLUDES) |
-| `FILTER_TAGS_WALK_HIERARCHY` | `true` | a selected tag also matches its descendants |
+| `GENRE_PARENT_TAG` | `GENRE` | 父标签，其后代成为流派 |
+| `GENRE_TOP_N` | `25` | 用于 `top_n` 模式 |
+| `FILTER_TAGS_MAX` | `50` | `/Items/Filters` 中每个维度的最大条目数 |
+| `GENRE_FILTER_LOGIC` | `AND` | `AND`（INCLUDES_ALL）或 `OR`（INCLUDES） |
+| `FILTER_TAGS_WALK_HIERARCHY` | `true` | 选中的标签同时匹配其后代 |
 
-### Search scope
-| Key | Default |
-|---|---|
-| `SEARCH_INCLUDE_SCENES` / `_PERFORMERS` / `_STUDIOS` / `_GROUPS` | all `true` |
+### 界面语言
 
-### Hero / banner
-| Key | Default | Description |
-|---|---|---|
+| 键 | 默认值 | 说明 |
+| --- | --- | --- |
+| `UI_LANGUAGE` | `auto` | 配置界面默认语言：`auto`（跟随浏览器）/ `en` / `zh`。侧边栏切换器只写本机 `localStorage`，优先级更高 |
+
+### 元数据刮削
+
+刮削管线桥接 Jellyfin 客户端的 Identify / 刷新元数据请求（见「本分支新增功能 ③」）。以下键均支持配置文件 + 环境变量双通道，且在网页界面**实时生效**（按请求读取，不需要重启）：
+
+| 键 | 默认值 | 说明 |
+| --- | --- | --- |
+| `ENABLE_SCRAPING` | `true` | 刮削功能总开关（关闭时 `/Items/{id}/MetadataEditor` 相关路由直接降级） |
+| `SCRAPE_APPLY_RELATIONSHIPS` | `true` | 识别后写回 performers / tags / studio 关系 |
+| `SCRAPE_APPLY_IMAGES` | `true` | 识别后写回封面图 |
+| `SCRAPE_RESULT_TTL_SECONDS` | `1800` | 候选结果的缓存时长 |
+| `SCRAPE_NUMERIC_SCRAPERS` | `fantiajp,GetchuDL` | 纯数字编号查询时参与路由的刮削器及其优先顺序 |
+| `SCRAPE_NUMERIC_URL_TEMPLATES` | `fantiajp=https://fantia.jp/posts/{id}\|https://fantia.jp/products/{id},getchudl=https://dl.getchu.com/i/item{id}` | 数字如何转成 URL；`{id}` 占位，`|` 分隔同一刮削器的多个 URL 形态（全部尝试，按相关性排序） |
+| `SCRAPE_ATTEMPT_TIMEOUT_SECONDS` | `20` | 单次刮削尝试的超时 |
+| `SCRAPE_SEARCH_BUDGET_SECONDS` | `25` | 一次搜索的总预算，超时后未尝试的 provider 被跳过 |
+| `SCRAPE_STASHBOX_ENABLED` | `true` | 是否把已配置的 Stash Box（StashDB / ThePornDB 等）纳入搜索扇出 |
+
+### 搜索范围
+
+| 键 | 默认值 |
+| --- | --- |
+| `SEARCH_INCLUDE_SCENES` / `_PERFORMERS` / `_STUDIOS` / `_GROUPS` | 全部为 `true` |
+
+### 焦点图 / 横幅
+
+| 键 | 默认值 | 说明 |
+| --- | --- | --- |
 | `HERO_SOURCE` | `recent` | `recent` / `random` / `favorites` / `top_rated` / `recently_watched` |
-| `HERO_MIN_RATING` | `75` | minimum `rating100` for `top_rated` mode |
-| `BANNER_MODE` | `recent` | SenPlayer banner pool: `recent` or `tag` |
-| `BANNER_POOL_SIZE` | `200` | size of the random pool in `recent` mode |
-| `BANNER_TAGS` | empty | comma-separated tags for `tag` mode |
+| `HERO_MIN_RATING` | `75` | `top_rated` 模式下的最低 `rating100` |
+| `BANNER_MODE` | `recent` | SenPlayer 横幅池：`recent` 或 `tag` |
+| `BANNER_POOL_SIZE` | `200` | `recent` 模式下随机池的大小 |
+| `BANNER_TAGS` | 空 | `tag` 模式下以逗号分隔的标签 |
 
-### Per-library default sort
-| Key | Default |
-|---|---|
+### 各媒体库默认排序
+
+| 键 | 默认值 |
+| --- | --- |
 | `SCENES_DEFAULT_SORT` | `DateCreated` |
 | `STUDIOS_DEFAULT_SORT` | `SortName` |
 | `PERFORMERS_DEFAULT_SORT` | `SortName` |
@@ -175,19 +256,21 @@ The full list lives in the conf file and the Web UI; the most common keys:
 | `TAG_GROUPS_DEFAULT_SORT` | `PlayCount` |
 | `SAVED_FILTERS_DEFAULT_SORT` | `PlayCount` |
 
-### Image / metadata policy
-| Key | Default | Description |
-|---|---|---|
-| `POSTER_CROP_ANCHOR` | `center` | crop anchor for portrait conversion |
-| `OFFICIAL_RATING` | `NC-17` | string reported as `OfficialRating` |
-| `SORT_STRIP_ARTICLES` | `The, A, An` | leading articles stripped for `SortName` |
-| `ENABLE_IMAGE_RESIZE` | `true` | requires Pillow (always installed) |
-| `IMAGE_CACHE_MAX_SIZE` | `100` | Pillow output cache entries |
+### 图片 / 元数据策略
 
-### Player profiles
-Per-client behavior is configured in INI-style `[player.<name>]` sections of the conf file (or via the Players tab in the Web UI). Each profile matches against User-Agent (substring, first-win, with a default fallback) and sets:
+| 键 | 默认值 | 说明 |
+| --- | --- | --- |
+| `POSTER_CROP_ANCHOR` | `center` | 竖版转换的裁切锚点 |
+| `OFFICIAL_RATING` | `NC-17` | 作为 `OfficialRating` 上报的字符串 |
+| `SORT_STRIP_ARTICLES` | `The, A, An` | 为 `SortName` 去除的前置冠词 |
+| `ENABLE_IMAGE_RESIZE` | `true` | 需要 Pillow（始终安装） |
+| `IMAGE_CACHE_MAX_SIZE` | `100` | Pillow 输出缓存条目数 |
 
-```
+### 播放器配置档
+
+按客户端的行为在配置文件的 INI 风格 `[player.<name>]` 区段中配置（或通过网页界面的播放器标签页）。每个配置档匹配 User-Agent（子串、首胜、带默认兜底）并设置：
+
+```ini
 [player.swiftfin]
 ua_match = Swiftfin
 performer_item_type = Person
@@ -195,11 +278,12 @@ scene_poster_format = portrait
 series_collection_type = tvshows
 ```
 
-Unique UAs are logged to `<LOG_DIR>/ua_log.json` and surfaced in the Web UI for one-click profile creation.
+独特的 UA 会记录到 `<LOG_DIR>/ua_log.json`，并在网页界面中展示，支持一键创建配置档。
 
-### Performance / Logging / Security
-| Key | Default |
-|---|---|
+### 性能 / 日志 / 安全
+
+| 键 | 默认值 |
+| --- | --- |
 | `STASH_TIMEOUT` / `STASH_RETRIES` | `30` / `3` |
 | `DEFAULT_PAGE_SIZE` / `MAX_PAGE_SIZE` | `50` / `200` |
 | `LOG_DIR` / `LOG_FILE` / `LOG_LEVEL` | `.` / `stash_jellyfin_proxy.log` / `INFO` |
@@ -208,144 +292,183 @@ Unique UAs are logged to `<LOG_DIR>/ua_log.json` and surfaced in the Web UI for 
 | `BAN_THRESHOLD` / `BAN_WINDOW_MINUTES` | `10` / `15` |
 | `JELLYFIN_VERSION` | `10.11.0` |
 
-Settings can also be set via environment variables (same names) — env vars win over the conf file and are shown read-only in the Web UI.
+配置项也可通过环境变量设置（同名）——环境变量优先级高于配置文件，并在网页界面中显示为只读。
 
-## Connecting Clients
+## 连接客户端
 
-In each client, add a Jellyfin server pointed at `http://your-server:8096` and log in with `SJS_USER` / `SJS_PASSWORD`.
+在每个客户端中，添加一个指向 `http://your-server:8096` 的 Jellyfin 服务器，并使用 `SJS_USER` / `SJS_PASSWORD` 登录。
 
-- **Infuse** — add a share, choose Jellyfin as the type
-- **Swiftfin** — add server, log in. Series studios appear under a `tvshows` library with native Series / Season / Episode navigation.
-- **SenPlayer** — add a Jellyfin/Emby server. The home banner cycles through randomized scene screenshots (configurable).
+- **Infuse**——添加一个共享，选择 Jellyfin 作为类型
+- **Swiftfin**——添加服务器、登录。剧集制片商会以 `tvshows` 库出现，带有原生的「剧集 → 季 → 单集」导航。
+- **SenPlayer**——添加一个 Jellyfin/Emby 服务器。首页横幅会轮播随机场景截图（可配置）。
 
-## Architecture
+## 架构
 
 ```
-Jellyfin client (Infuse / Swiftfin / SenPlayer)
+Jellyfin 客户端（Infuse / Swiftfin / SenPlayer）
         │
         ▼
-   stash-jellyfin-proxy ── port 8096 (Jellyfin API)
+   stash-jellyfin-proxy ── 端口 8096（Jellyfin API）
    ─ Starlette + Hypercorn
-   ─ async httpx → Stash GraphQL
-   ─ per-client Player Profiles
-   ─ TTLCache for connection state + filter cache
+   ─ 异步 httpx → Stash GraphQL
+   ─ 按客户端的播放器配置档
+   ─ 用于连接状态 + 筛选缓存的 TTLCache
         │
         ▼
-   Stash GraphQL API (port 9999)
+   Stash GraphQL API（端口 9999）
 ```
 
-The package is organized topically:
+该包按主题组织：
 
 ```
 stash_jellyfin_proxy/
-  __main__.py                  entry point + startup sequence
-  runtime.py                   shared mutable state (single source of truth)
-  app.py                       Starlette app + middleware stack
-  errors.py                    StashUnavailable / StashError + handlers
+  __main__.py                  入口点 + 启动序列
+  runtime.py                   共享可变状态（唯一事实来源）
+  app.py                       Starlette 应用 + 中间件栈
+  errors.py                    StashUnavailable / StashError + 处理器
   cache/ttl.py                 TTLCache
-  config/                      bootstrap, loader, helpers, v1→v2 migration
-  endpoints/                   items, images, playback, stream, search, user_actions, views, stubs
-  mapping/                     scene → Jellyfin item shape, image policy, user DTO
-  middleware/                  auth, request logging (pure ASGI), case-insensitive paths
-  players/                     Profile dataclass + UA matcher with capture
-  state/                       persisted stats, live stream tracking
-  stash/                       async client + GraphQL helpers
-  ui/                          Web UI handlers + templates
-  util/                        ID helpers, image (PIL) helpers, episode-title parsing
+  config/                      引导、加载器、辅助函数、v1→v2 迁移
+  endpoints/                   items、images、playback、stream、search、user_actions、views、stubs
+  endpoints/metadata.py        刮削桥接：Identify / 刷新元数据 → Stash 刮削器 + Stash Box（CN 分支新增）
+  mapping/                     场景 → Jellyfin 条目形状、图片策略、用户 DTO
+  middleware/                  认证、请求日志（纯 ASGI）、大小写不敏感路径
+  players/                     Profile 数据类 + 带捕获的 UA 匹配器
+  state/                       持久化统计、实时串流追踪
+  stash/                       异步客户端 + GraphQL 辅助函数
+  ui/                          Web 界面处理器 + 模板
+  ui/static/i18n.js            配置界面翻译引擎 + zh-CN 目录（CN 分支新增）
+  util/                        ID 辅助函数、图片（PIL）辅助函数、单集标题解析
+  util/local_media.py          多文件场景：路径映射 + 磁盘直读（CN 分支新增）
 ```
 
-Streaming uses `httpx.AsyncClient.send(stream=True)` + `aiter_bytes()` — byte ranges are forwarded directly, no buffering. The request-logging middleware is pure ASGI (not `BaseHTTPMiddleware`) so it doesn't wrap the response body.
+串流使用 `httpx.AsyncClient.send(stream=True)` + `aiter_bytes()`——字节区间被直接转发，没有缓冲。请求日志中间件是纯 ASGI（而非 `BaseHTTPMiddleware`），所以它不会包裹响应体。
 
-## Requirements
+## 需求
 
 - Python 3.10+
-- Stash media server with API access enabled
-- Dependencies: `hypercorn`, `starlette`, `httpx`, `Pillow`, `setproctitle` — installed automatically via `pip install -e .`
+- 已启用 API 访问的 Stash 媒体服务器
+- 依赖项：`hypercorn`、`starlette`、`httpx`、`Pillow`、`setproctitle`——通过 `pip install -e .` 自动安装
 
-## Known Limitations
+## 已知限制
 
-- **Single-user authentication**: one set of `SJS_USER` / `SJS_PASSWORD` credentials shared by every client.
-- **Image cache busting on native clients**: clients key images by `(ItemId, ImageTag)` and ignore HTTP cache headers. The proxy rotates `ImageTag` per process restart so artwork refreshes; clearing the client's metadata cache is still the surest fix if a specific image gets stuck.
-- **Official Jellyfin apps unsupported**: those apps require the `jellyfin-web` WebView bundle, which the proxy doesn't ship. See `BACKLOG.md` for the deferred design.
-- **Series CollectionType is per-client**: only Swiftfin gets native `tvshows` navigation. Infuse and SenPlayer fall back to a flat BoxSet because their `tvshows` renderer shows a blank folder.
+- **单用户认证**：所有客户端共享同一组 `SJS_USER` / `SJS_PASSWORD` 凭据。
+- **原生客户端的图片缓存破除**：客户端以 `(ItemId, ImageTag)` 作为图片键并忽略 HTTP 缓存头。代理会在每次进程重启时轮换 `ImageTag`，以便 artwork 刷新；若某张特定图片卡住，清理客户端的元数据缓存仍然是最可靠的解决办法。
+- **官方 Jellyfin 应用不支持**：这些应用需要 `jellyfin-web` WebView 包，而代理不附带它。详见 `BACKLOG.md` 中推迟的设计。
+- **剧集 CollectionType 是按客户端的**：只有 Swiftfin 获得原生的 `tvshows` 导航。Infuse 和 SenPlayer 会回退到扁平的 BoxSet，因为它们的 `tvshows` 渲染器会显示一个空白文件夹。
 
-## Changelog
+## 更新日志
+
+> 以下 `CN.x` 为本分支的自研版本号（代码版本号保持上游 `7.3.10`），按时间倒序叠加在上游更新日志之前。
+
+### v7.3.10-CN.2 —— 元数据刮削管线（自研）
+
+为代理补上 Stash 的刮削能力桥接：Jellyfin 客户端（手机 App 的 Identify / 刷新元数据）→ 代理 → Stash 已装社区刮削器 + 已配置的 Stash Box → 结果写回 Stash。
+
+**新增能力。**
+
+- **三类入口**：按名搜索（`provider=all` 全扇出 / 指定社区刮削器 / 指定 Stash Box）、纯数字编号、URL 直刮。
+- **数字编号多形态路由**：`SCRAPE_NUMERIC_URL_TEMPLATES` 支持一个刮削器多个 URL 形态（`|` 分隔）。默认 `fantiajp=…/posts/{id}|…/products/{id}`——Fantia 的帖子与商品是共用编号的不同对象，两边都返回 200，以前只合成 posts 形态导致数字查询刮出完全无关的结果。
+- **相关性排序**：并发扇出从「先到者胜」改为「等待全部定向命中 → 按相关性排序 → 返回多结果（上限 3 组）」。相关性 = 候选 payload 与**条目自身文件名 / 标题**的 token 重叠数（camelCase 拆词，`LyaCutie` ↔ `Lya Cutie`），匹配形态置顶、其余保留但降级；同源 URL 去重（条目自身 URL 与同形态合成 URL 只显示一次）。
+- **搜索词与排序词分离**：搜索用短净文本，排序用「标题 + 文件名」全文——`buena-320s.mp4` 的文件名才是区分 Fantia 同号双对象的唯一信号。
+- **Stash Box 接入**：`source {stash_box_index}`；box 清单从 `configuration.general.stashBoxes` 发现并缓存；文件名自动归一化为演员查询；`SCRAPE_STASHBOX_ENABLED` 开关（UI 系统面板实时可改）。
+
+**实测证据**（飞牛 NAS 真机）：Fantia `1006291` → 商品 `buena-320` 置顶（无关的帖子「青橙」降级第二，落库终态 `code=buena-320`）；`0541-LyaCutie-2160p` 识别 **0 → 10 条**结果（ThePornDB，performer 精确匹配）。267 项单元测试通过。
+
+**限制**：StashDB / ThePornDB **不收录**小众站场景（如 Cospuri 编号场景），box 给出的是同演员其他站的候选，需人工挑选；精确刮削需自写站点刮削器且要求 NAS 有可达该站的出网路径。
+
+完整排障记录见 [SCRAPING-NOTES.md](SCRAPING-NOTES.md)。
+
+### v7.3.10-CN.1 —— 多文件（合并）场景 + 配置界面中英双语（自研）
+
+**多文件（合并）场景。** 上游只下发合并场景的主文件——根因是 Stash 侧硬限制（流式路由硬编码 `scene.Files.Primary()`，无按文件取流的 API）。本分支的实现：
+
+- `/PlaybackInfo` 为每个文件下发独立 `MediaSource`（复合 ID `scene-13-f751`），客户端天然出现版本选择器
+- 非主文件由代理按 `LIBRARY_PATH_MAP` 翻译路径后**直读磁盘**（`FileResponse`，206 分片、拖进度条正常）；主文件仍走 Stash 原生流，零回归
+- 默认关闭（`MULTI_FILE_SCENES` + `LIBRARY_PATH_MAP`）；开关关闭 / 映射为空 / 文件不可读均**静默回退**到原生流，不会因配错导致播放失败
+
+**配置界面中英双语。** 8 标签页全部支持中英切换：gettext 风格「英文原串作键 + 运行时 DOM 走查」（zh-CN 目录 387 条），模板零标注；幂等重入、不与动态渲染抢节点；侧边栏切换（localStorage）与服务端 `UI_LANGUAGE` 两层优先级。**协议层零改动**，切换语言不影响客户端播放。
+
+**一并修复**：`Content-Disposition` 携带中日文文件名时 HTTP 头（latin-1）编码崩溃成 500 空响应——按 RFC 6266 同时输出 ASCII 回退名与 `filename*=UTF-8''` 编码名。
+
+客户端侧媒体库名汉化（场景/厂商/演员/分组/播放列表）同轮并入代码树，不再依赖单独挂载手改文件。
+
+详细方案、部署形态与踩坑记录见 [MULTIFILE-AND-I18N.md](MULTIFILE-AND-I18N.md)。
 
 ### v7.3.10
 
-Fourth report from @tanlidoushen on [#28](https://github.com/feldorn/Stash-Jellyfin-Proxy/issues/28) that I initially missed and closed the issue without addressing — the video-stream chip on Yamby's scene detail-page header rendered blank while the audio chip showed fine.
+@tanlidoushen 在 #28 上的第四次报告——我最初漏看并在未处理的情况下关闭了该 issue——Yamby 场景详情页头部中的视频流芯片（chip）渲染为空白，而音频芯片显示正常。
 
-**Root cause.** `mapping/scene.format_jellyfin_item` built the audio `MediaStream` with a `DisplayTitle` (e.g. `"AAC - Stereo"`) but the video stream had no `DisplayTitle` at all. Jellyfin SDK clients render the detail-header stream chips from `MediaStreams[].DisplayTitle`, so a missing value renders as blank. The media-info panel at the bottom of the page uses `Width` / `Height` / `Codec` directly, which is why that panel was unaffected.
+**根因。** `mapping/scene.format_jellyfin_item` 在为音频 `MediaStream` 构建时带了 `DisplayTitle`（例如 `"AAC - Stereo"`），但视频流完全没有 `DisplayTitle`。Jellyfin SDK 客户端从 `MediaStreams[].DisplayTitle` 渲染详情头部的流芯片，所以缺失的值会渲染为空白。而页面底部的媒体信息面板直接使用 `Width` / `Height` / `Codec`，这正是该面板不受影响的原因。
 
-**Fix.** When width/height are known, the video stream now gets both `DisplayTitle` and `Title` in the Jellyfin convention `{resolution bucket} {CODEC}` — `"4K H264"`, `"1080p HEVC"`, `"720p H264"`, `"SD MPEG4"`, or `"{h}p {CODEC}"` for unusual heights. When dimensions aren't known, no label is invented (chip stays blank rather than lie about the media). Reporter-verified code, applied as suggested.
+**修复。** 当已知宽高时，视频流现在按 Jellyfin 约定获得 `DisplayTitle` 与 `Title`，格式为 `{分辨率档位} {CODEC}`——`"4K H264"`、`"1080p HEVC"`、`"720p H264"`、`"SD MPEG4"`，或对不常见高度使用 `"{h}p {CODEC}"`。当尺寸未知时不编造标签（芯片保持空白，而非谎报媒体信息）。按报告者验证过的代码，按其建议应用。
 
-**Tests.** 5 new in `tests/unit/test_scene_mapping.py` covering each resolution bucket and the no-dimensions fallback. 133 passing.
+**测试。** `tests/unit/test_scene_mapping.py` 中新增 5 个测试，覆盖每个分辨率档位及无尺寸的兜底情况。共 133 个测试通过。
 
 ### v7.3.9
 
-Closes [#28](https://github.com/feldorn/Stash-Jellyfin-Proxy/issues/28) — three related tag/genre bugs, all reported and root-caused by @tanlidoushen with confirmed local fixes.
+关闭 #28——三个相关的标签/流派 bug，均由 @tanlidoushen 报告并定位根因，且本地修复已确认。
 
-**Bug 1 — `TAG_GROUPS` folder empty for a short/common tag name (e.g. `POV`).**
-The tag lookup in `endpoints/items.py` (two sites) and `endpoints/views.py` used Stash's `findTags(filter: {q: <name>})` with the default `per_page: 25`. When a short tag name is a substring of many longer tags (`POV` inside "Anal POV", "Doggy POV", …), the exact-match tag can be sorted off the first page. The subsequent `.lower() == .lower()` check then fails → "Tag not found" → empty folder. Added `per_page: -1` to those three call sites to match the pattern already used in `search.py`/`playlists.py`.
+**Bug 1 —— `TAG_GROUPS` 文件夹对较短/常见的标签名（例如 `POV`）为空。** `endpoints/items.py`（两处）与 `endpoints/views.py` 中的标签查找使用了 Stash 的 `findTags(filter: {q: <name>})`，且默认 `per_page: 25`。当一个短标签名是许多更长标签的子串时（「Anal POV」、「Doggy POV」……中的 `POV`），精确匹配的标签可能被排到第一页之外。随后的 `.lower() == .lower()` 检查便失败 → 「未找到标签」→ 空文件夹。已在这三处调用点加上 `per_page: -1`，以匹配 `search.py`/`playlists.py` 中已有的模式。
 
-**Bug 2 — `GenreIds` filter silently ignored (Yamby Android app).**
-`endpoint_genres` emits genre items with `Id: "genre-<stash-tag-id>"`. `_parse_filter_params` in `endpoints/items.py` read `Genres` / `Tags` / `Years` (name-based) but not `GenreIds` (id-based), so when Yamby echoed the id back on a tap, the parameter was silently dropped and the full library came back unfiltered. Now:
+**Bug 2 —— `GenreIds` 筛选被静默忽略（Yamby Android 应用）。** `endpoint_genres` 发出的流派条目带有 `Id: "genre-<stash-tag-id>"`。`endpoints/items.py` 中的 `_parse_filter_params` 读取了 `Genres` / `Tags` / `Years`（基于名称），但没有读取 `GenreIds`（基于 id），所以当 Yamby 在点击后将 id 回传时，该参数被静默丢弃，整个媒体库在未经筛选的情况下返回。现在：
 
-- `endpoints/search.py` maintains a module-level `_GENRE_ID_NAMES` dict (`"genre-<id>" → name`), populated by `endpoint_genres` on every `/Genres` response (both the parent-filtered and library-wide branches).
-- `_parse_filter_params` reads `GenreIds`, looks each id up in that dict, and appends the resolved name to `genres` — so the existing tag-name filter path takes over. Unresolved ids drop silently (the client is expected to call `/Genres` before tapping a genre, which every SDK client does).
+- `endpoints/search.py` 维护一个模块级的 `_GENRE_ID_NAMES` 字典（`"genre-<id>" → 名称`），由 `endpoint_genres` 在每次 `/Genres` 响应时填充（包括父筛选和库级两个分支）。
+- `_parse_filter_params` 读取 `GenreIds`，在字典中查找每个 id，并将解析出的名称追加到 `genres`——于是现有的标签名筛选路径接管。未解析的 id 静默丢弃（客户端预期在点击流派前调用 `/Genres`，每个 SDK 客户端都会这样做）。
 
-**Bug 3 — Scene detail page has no genre section (Yamby, other Jellyfin SDK clients).**
-Two gaps in `mapping/scene.format_jellyfin_item`:
+**Bug 3 —— 场景详情页没有流派区块（Yamby 及其他 Jellyfin SDK 客户端）。** `mapping/scene.format_jellyfin_item` 中有两处缺口：
 
-- The `_SCENE_FIELDS` GraphQL fragments (two identical sites in `items.py`) fetched `tags { name }` without `id` — no id was available to attach even if the mapping code wanted it. Now fetches `tags { name id }` — extended to `studio.tags` and `parent_studio.tags` for symmetry (harmless small payload bump).
-- The item dict emitted `Genres: string[]` (legacy, used by Infuse/Swiftfin) but never `GenreItems: NameGuidPair[]` (used by the current Jellyfin SDK to render the detail-page genre row). Now emits `GenreItems` with `Id: "genre-<tag-id>"` matching the shape `endpoint_genres` produces, so tapping a genre round-trips through the Bug 2 `GenreIds` resolver.
+- `_SCENE_FIELDS` GraphQL 片段（在 `items.py` 中两处相同代码）获取了 `tags { name }` 但没有 `id`——即使映射代码想要，也没有可用于附加的 id。现在获取 `tags { name id }`——为对称也扩展到 `studio.tags` 与 `parent_studio.tags`（负载小幅增加，无害）。
+- 条目字典发出了 `Genres: string[]`（遗留，Infuse/Swiftfin 使用）但从未发出 `GenreItems: NameGuidPair[]`（当前 Jellyfin SDK 用来渲染详情页流派行）。现在发出 `GenreItems`，其 `Id: "genre-<tag-id>"` 匹配 `endpoint_genres` 生成的形状，以便点击流派时能通过 Bug 2 的 `GenreIds` 解析器往返。
 
-**Middleware canonical map extended.** Added `genreids`, `genres`, `tags`, `years` alongside issue #27's map so a fully-lowercase client (Roku-style) hits the same `.get("GenreIds") / .get("Genres")` reads.
+**中间件规范映射扩展。** 在 #27 的映射基础上新增了 `genreids`、`genres`、`tags`、`years`，使全小写的客户端（Roku 风格）命中相同的 `.get("GenreIds") / .get("Genres")` 读取。
 
-**Tests.** 6 new: 4 in `tests/unit/test_scene_mapping.py` for `GenreItems` emission (shape, missing-id handling, empty-tag case, order preservation) and 2 in `tests/unit/test_middleware_paths.py` for the new canonical map entries. 128 passing total.
+**测试。** 新增 6 个：4 个在 `tests/unit/test_scene_mapping.py` 中用于 `GenreItems` 发出（形状、缺失 id 处理、空标签情况、顺序保持），2 个在 `tests/unit/test_middleware_paths.py` 中用于新的规范映射条目。总计 128 个测试通过。
 
 ### v7.3.8
 
-Closes [#27](https://github.com/feldorn/Stash-Jellyfin-Proxy/issues/27) — Roku Studios / Performers tiles were empty because the Roku Jellyfin channel sends **fully-lowercase query parameter names** (`parentid=`, `startindex=`, `personids=`), and the handlers in `endpoints/items.py` only read the mixed-case and camelCase spellings. Report and root-cause analysis by @madlens95 — including the confirmed local fix and a proposal to normalize query strings in middleware alongside the path normalization already there.
+关闭 #27——Roku 的制片商 / 演员磁贴为空，因为 Roku Jellyfin 频道发送**全小写的查询参数名**（`parentid=`、`startindex=`、`personids=`），而 `endpoints/items.py` 中的处理器只读取了混合大小写和 camelCase 拼写。由 @madlens95 报告并定位根因——包括确认的本地修复，以及建议在中间件中与已有的路径规范化一并规范化查询字符串的方案。
 
-**One layer below the path fix from v7.3.0.** `CaseInsensitivePathMiddleware` (which arsfeld shipped in v7.3.0 for lowercase paths) only rewrote `scope["path"]`. `scope["query_string"]` was left alone, so `/items/` → `/Items` normalized fine but the `parentid=studio-5` in the query kept its lowercase spelling and `.get("ParentId") or .get("parentId")` fell to None.
+**比 v7.3.0 的路径修复低一层。** `CaseInsensitivePathMiddleware`（arsfeld 在 v7.3.0 为小写路径引入）只重写了 `scope["path"]`。`scope["query_string"]` 原样保留，所以 `/items/` → `/Items` 规范化正常，但查询中的 `parentid=studio-5` 仍保留其小写拼写，`.get("ParentId") or .get("parentId")` 落到 None。
 
-**Fix — query-string normalization in the same middleware.** New `_normalize_query_string` helper parses the query string, matches each parameter name's lowercase form against a canonical spelling map (`{"parentid": "ParentId", "startindex": "StartIndex", …}`), and rewrites when it finds a hit. Unknown parameters pass through unchanged; the identity-check fast path skips the parse+encode when the query is already canonical. Every existing `.get("ParentId") or .get("parentId")` chain in the codebase now works for **all** client casings — Infuse camelCase, Swiftfin PascalCase, Roku lowercase — without touching the handlers. New endpoints just read the canonical spelling and get every client for free.
+**修复——在同一中间件中规范化查询字符串。** 新的 `_normalize_query_string` 辅助函数解析查询字符串，将每个参数名的小写形式与规范拼写映射（`{"parentid": "ParentId", "startindex": "StartIndex", …}`）匹配，命中时重写。未知参数原样通过；当查询已是规范形式时，恒等检查快速路径跳过解析+编码。代码库中每个现有的 `.get("ParentId") or .get("parentId")` 链现在对**所有**客户端大小写都生效——Infuse camelCase、Swiftfin PascalCase、Roku 小写——无需改动处理器。新的端点只需读取规范拼写，即可免费获得所有客户端支持。
 
-Affected parameters (all now normalized): `ParentId`, `StartIndex`, `Limit`, `Ids`, `PersonIds`, `SearchTerm`, `SortBy`, `SortOrder`, `SeasonId`, `EntryIds`, `Filters`, `Name`, `IncludeItemTypes`, and (new) `StudioIds`.
+受影响的参数（现在全部规范化）：`ParentId`、`StartIndex`、`Limit`、`Ids`、`PersonIds`、`SearchTerm`、`SortBy`、`SortOrder`、`SeasonId`、`EntryIds`、`Filters`、`Name`、`IncludeItemTypes`，以及（新增）`StudioIds`。
 
-**Also (per the reporter's side-observation):** `endpoints/items.py` now handles a bare `StudioIds` query parameter by mapping it to `ParentId=studio-N`, so a client that filters studios via `StudioIds` alone (rather than nesting the studio into `ParentId`) reaches the same code path. Comma-separated values take the first entry to match the single-studio semantics of the existing `studio-` branch.
+**另外（按报告者的附带观察）：** `endpoints/items.py` 现在处理裸 `StudioIds` 查询参数，将其映射到 `ParentId=studio-N`，使仅通过 `StudioIds` 筛选制片商的客户端（而非将制片商嵌进 `ParentId`）到达相同代码路径。逗号分隔值取第一个条目，以匹配现有 `studio-` 分支的单制片商语义。
 
-**Tests.** 14 new tests in `tests/unit/test_middleware_paths.py` cover both the pre-existing path normalization (regression) and the new query normalization: lowercase → canonical, mixed-case → canonical, canonical is a no-op, unknown params pass through, empty QS is a no-op, values aren't touched, and end-to-end path + QS in the same request.
+**测试。** `tests/unit/test_middleware_paths.py` 中新增 14 个测试，覆盖既有的路径规范化（回归）与新的查询规范化：小写 → 规范、混合大小写 → 规范、规范为无操作、未知参数通过、空 QS 为无操作、值不被触碰、以及同请求中的端到端路径 + QS。
 
 ### v7.3.7
 
-Reported by a user testing v7.3.6 on iPad Brave: the new copy buttons didn't do anything. After a lot of red herrings, the actual bug turned out to be **static-asset caching** — the browser was executing a pre-v7.3.6 `app.js` from cache and never saw the new `.pw-copy` handler at all. The v7.3.6 code was fine.
+由一位在 iPad Brave 上测试 v7.3.6 的用户报告：新的复制按钮没有任何作用。在排查了许多误导性线索后，真正的 bug 其实是**静态资源缓存**——浏览器执行的是缓存中的 v7.3.6 之前版本的 `app.js`，根本没看到新的 `.pw-copy` 处理器。v7.3.6 的代码本身没问题。
 
-**Cache-bust static assets on every release AND every restart.**
-- `index.html` now references `/static/app.js?v={{ASSET_V}}` and `/static/app.css?v={{ASSET_V}}`. The template substitution injects `<__version__>-<PROXY_START_TIME>`, so any release change or restart forces browsers to fetch fresh. iOS Safari (and Chromium browsers wrapping WebKit on iPad — including Brave) are aggressive about static-asset caching to the point that hard-reload doesn't reliably evict; a query-string change is the reliable fix.
+**在每个版本发布时以及每次重启时都让静态资源缓存失效。**
 
-**Defensive clipboard improvements** — from iterating on the reported bug before the cache angle was clear.
-- `copyText()` now detects iOS/iPad (`/iP(hone|ad|od)/` on `navigator.platform` OR touch-capable "Mac" which is how iPad reports itself in desktop-site mode) and takes an iOS-friendly path directly: `<textarea readonly>` + `focus` + `select` + `setSelectionRange(0, len)` + `document.execCommand("copy")`. The `setSelectionRange` after `.select()` is the specific step iOS Safari needs.
-- New `copyLazy(getText, msg)` helper for cases where the value is fetched asynchronously (masked field reveal on the Connection tab). On non-iOS Chromium it uses `ClipboardItem({"text/plain": Promise<Blob>})` + `navigator.clipboard.write` — the correct pattern for preserving transient user activation across an `await`. Awaiting before `writeText` drops the user gesture in Chrome/Brave/Edge and gets rejected as `NotAllowedError`.
-- Copy buttons flash `✓` for 700 ms on tap, so mobile users get immediate visual feedback that their click was received even if the clipboard operation itself fails.
-- `copyText`'s `execCommand` fallback now correctly treats a `false` return as failure (was silently toasting "success" when the copy didn't actually happen).
+- `index.html` 现在引用 `/static/app.js?v={{ASSET_V}}` 与 `/static/app.css?v={{ASSET_V}}`。模板替换注入 `<__version__>-<PROXY_START_TIME>`，所以任何版本变更或重启都会强制浏览器重新获取。iOS Safari（以及 iPad 上包装 WebKit 的 Chromium 浏览器——包括 Brave）对静态资源缓存非常激进，以至于硬刷新都不可靠地逐出；查询字符串变更才是可靠的修复。
+
+**防御性的剪贴板改进**——在缓存角度清晰之前，基于报告 bug 的迭代而来。
+
+- `copyText()` 现在检测 iOS/iPad（`navigator.platform` 上的 `/iP(hone|ad|od)/`，或以触摸能力「Mac」出现的设备——iPad 在桌面站点模式下的自我报告方式）并直接走 iOS 友好路径：`<textarea readonly>` + `focus` + `select` + `setSelectionRange(0, len)` + `document.execCommand("copy")`。`.select()` 之后的 `setSelectionRange` 是 iOS Safari 需要的特定步骤。
+- 新的 `copyLazy(getText, msg)` 辅助函数用于异步获取值的情况（连接标签页上的掩码字段揭示）。在非 iOS Chromium 上使用 `ClipboardItem({"text/plain": Promise<Blob>})` + `navigator.clipboard.write`——跨 `await` 保留瞬时用户激活的正确模式。在 `writeText` 之前 await 会在 Chrome/Brave/Edge 中丢弃用户手势，并以 `NotAllowedError` 被拒绝。
+- 复制按钮在点击时闪烁 `✓` 700 毫秒，所以即使剪贴板操作本身失败，移动用户也能立即获得点击已被接收的视觉反馈。
+- `copyText` 的 `execCommand` 兜底现在正确地将 `false` 返回视为失败（之前在复制实际未发生时静默提示「成功」）。
 
 ### v7.3.6
 
-Small quality-of-life addition on the **Connection** tab: copy buttons (⧉) next to the four fields you'd type into a Jellyfin-compatible player during setup — **API Key**, **Public URL**, **Username**, and **Password**. Same idea and same helpers as the Connect-a-Player modal on the Dashboard (which was, and remains, the fastest way to grab all three at once), but useful for anyone who lands on the Connection tab first and doesn't want to select-and-copy from an `<input>` on a touch device.
+连接（Connection）标签页上的小型体验增强：在你会在设置期间输入到兼容 Jellyfin 的播放器的四个字段旁边加了复制按钮（⧉）——**API 密钥、公共 URL、用户名、密码**。与仪表盘上的「连接播放器」模态框（它过去是、现在仍是一次抓取全部三者的最快方式）思路与辅助函数相同，但适用于那些先落在连接标签页、又不想在触摸设备上从 `<input>` 中选择并复制的人。
 
-Masked fields (Password, API Key) fetch the real value via the existing `/api/config/reveal` endpoint before copying, so the clipboard carries the actual secret rather than asterisks or blank. Reuses the `.pw-wrap` / `.pw-reveal` styling and `copyText()` clipboard helper introduced in v7.2.0.
+掩码字段（密码、API 密钥）在复制前通过现有的 `/api/config/reveal` 端点获取真实值，所以剪贴板携带的是真实密钥，而非星号或空白。复用了 v7.2.0 引入的 `.pw-wrap` / `.pw-reveal` 样式与 `copyText()` 剪贴板辅助函数。
 
 ### v7.3.5
 
-Closes [#26](https://github.com/feldorn/Stash-Jellyfin-Proxy/issues/26) (@stashcollection14) — Stash's per-scene "total play duration" column stayed at zero because the proxy was never sending the `playDuration` argument on `sceneSaveActivity`. Play count and progress updated correctly (fixed in v7.3.4); duration did not.
+关闭 #26（@stashcollection14）——Stash 每场景的「总播放时长」列一直为零，因为代理从未在 `sceneSaveActivity` 上发送 `playDuration` 参数。播放次数和进度更新正确（在 v7.3.4 修复）；时长没有。
 
-**Root cause.** Stash's `sceneSaveActivity(id, resume_time, playDuration)` mutation *accumulates* the `playDuration` argument into the scene's total. Our three call sites in `endpoints/views.py` (Progress, Stopped >90%, Stopped ≤90%) only passed `resume_time`, so play_duration was never touched.
+**根因。** Stash 的 `sceneSaveActivity(id, resume_time, playDuration)` 变更将 `playDuration` 参数*累加*进场景的总时长中。我们在 `endpoints/views.py` 中的三处调用点（进度、停止 >90%、停止 ≤90%）只传了 `resume_time`，所以 play_duration 从未被触碰。
 
-**Fix.** All three call sites now send `playDuration = wall-clock seconds elapsed since the last event on this stream`. The delta comes from a small helper (`_consume_watched_delta`) that reads `last_progress_time` off the tracked `_active_streams` record, updates it, and returns the delta capped at 60 seconds per event. Using wall-clock time (not position delta) means the count is unaffected by seeking, and is naturally correct through pauses on well-behaved clients (they stop firing Progress events while paused, so no time accrues). The 60-second per-event cap defends against long client-side stalls or delayed Progress events that would otherwise inflate the count.
+**修复。** 现在三处调用点都发送 `playDuration = 自该串流上一次事件以来的挂钟秒数`。该增量来自一个小辅助函数（`_consume_watched_delta`），它从被追踪的 `_active_streams` 记录读取 `last_progress_time`，更新它，并返回上限为每次事件 60 秒的增量。使用挂钟时间（而非位置增量）意味着该计数不受拖动影响，并在行为良好的客户端上自然正确地处理暂停（它们在暂停时停止触发 Progress 事件，所以不计时间）。每次事件 60 秒的上限防御了客户端长时间停滞或延迟的 Progress 事件，否则会夸大计数。
 
-Log lines on each event now include the delta added so it's easy to spot-check in the log:
+每个事件的日志行现在包含所加的增量，便于在日志中抽查：
+
 ```
 ⏸ Saved resume + recorded play: scene-3814 at 1570s (21%, +14s duration)
 ▶ Auto-marked played: scene-3814 (100% watched, +8s duration)
@@ -353,205 +476,237 @@ Log lines on each event now include the delta added so it's easy to spot-check i
 
 ### v7.3.4
 
-Closes [#25](https://github.com/feldorn/Stash-Jellyfin-Proxy/issues/25) part 2 — partial-play sessions weren't being recorded in Stash's `play_history`. Reporter @tanlidoushen watched to 21% of a scene from Hills Lite, exited, and expected the scene to appear at the top of `?sortby=last_played_at&sortdir=desc`. The resume position was saved correctly, but `play_count` never incremented and no play_history entry was written — so Stash didn't know a play had happened.
+关闭 #25 第二部分——部分播放的会话未被记录到 Stash 的 `play_history` 中。报告者 @tanlidoushen 观看了 Hills Lite 的一个场景到 21%，退出，并期望该场景出现在 `?sortby=last_played_at&sortdir=desc` 的顶部。续播位置被正确地保存了，但 `play_count` 从未递增，也没有写入 play_history 条目——所以 Stash 不知道发生了一次播放。
 
-**Root cause.** `endpoints/views.py` on `Sessions/Playing/Stopped` only called `sceneAddPlay` when the user watched >90%. Anything less was treated as pure "in progress" — resume position saved, no play recorded. Under this policy, a user who watched half a scene and exited had no evidence of the session in Stash's history.
+**根因。** `endpoints/views.py` 在 `Sessions/Playing/Stopped` 上仅当用户观看 >90% 时才调用 `sceneAddPlay`。低于此值的都被当作纯粹的「进行中」——保存续播位置，不记录播放。在此策略下，观看半个场景后退出的用户在 Stash 历史中没有任何该会话的证据。
 
-**Fix.** Any session that stops past a 30-second position threshold now records a play via `sceneAddPlay` (which increments `play_count`, adds a `play_history` entry, and bumps `last_played_at`). Sessions under 30s still just save resume position — 30s is the "brief tap" threshold below which we assume an accidental click or stray seek, not a real watch. Existing >90% auto-mark behavior is unchanged (still records the play and clears the resume position).
+**修复。** 任何停止位置超过 30 秒阈值的会话现在都通过 `sceneAddPlay` 记录一次播放（它递增 `play_count`、添加 `play_history` 条目并推进 `last_played_at`）。低于 30 秒的会话仍只保存续播位置——30 秒是「短暂点按」阈值，低于它我们假设是意外点击或漂移的拖动，而非真实观看。现有的 >90% 自动标记行为不变（仍记录播放并清除续播位置）。
 
-**Behavior change to be aware of.** Every existing Infuse / Swiftfin / SenPlayer / Roku user will start seeing partial-watch sessions appear in Stash's play history and reflected in `last_played_at`. That matches how Stash's own web UI, Plex, Trakt, and most media systems track "you watched this" — but if you'd been relying on "only completed watches count," this is the release that changes it.
+**需注意的行为变更。** 每个现有的 Infuse / Swiftfin / SenPlayer / Roku 用户都会开始在 Stash 播放历史中看到部分观看会话，并反映在 `last_played_at` 中。这与 Stash 自带的 Web UI、Plex、Trakt 及大多数媒体系统追踪「你看过这个」的方式一致——但如果你之前依赖「只有完整观看才算数」，这个版本会改变它。
 
 ### v7.3.3
 
-Two of the three issues from [#25](https://github.com/feldorn/Stash-Jellyfin-Proxy/issues/25) (reported by @tanlidoushen). The third — Hills Lite "Continue Watching" — is still under investigation pending a log excerpt from the reporter.
+#25 中三个问题里的两个（由 @tanlidoushen 报告）。第三个——Hills Lite 的「继续观看」——仍在等待报告者提供日志片段调查中。
 
-**GraphQL alias notices no longer log as warnings** (#25 issue 1a)
-- Stash's `errors` array in GraphQL responses mixes real errors with informational notices — e.g., `"name 'SERIES' is used as alias for '系列'"` when a config name resolves via a Stash alias rather than a primary name. The proxy was logging the entire array at `WARNING`, so users with non-English primary tag names saw spurious noise on every lookup. Notices matching `is used as alias for` now log at `DEBUG`; real errors still log at `WARNING`.
+**GraphQL 别名提示不再作为警告记录**（#25 问题 1a）
 
-**CJK glyphs on generated library covers** (#25 issue 1b)
-- The tag-group virtual-library cover generator (`util/images.py`) uses PIL with DejaVu Sans Bold, which lacks CJK glyphs — Chinese/Japanese/Korean tag names rendered as tofu boxes (`[ ] [ ]`) on the cover art. Added a CJK-capable font path list preferred whenever the label contains any character in the CJK / halfwidth-fullwidth range (codepoint ≥ 0x2E80). Latin-only labels continue to use DejaVu, so existing covers are visually unchanged.
-- **Dockerfile:** added `fonts-noto-cjk` so the Noto Sans CJK Bold TTC is available inside the container. Native (non-Docker) installs need to install a CJK font themselves; the picker will find Noto CJK, PingFang, or Hiragino Sans GB automatically at the standard system paths.
+- Stash GraphQL 响应中的 `errors` 数组混合了真实错误与信息性提示——例如当配置名通过 Stash 别名而非主名解析时（`"name 'SERIES' is used as alias for '系列'"`）。代理曾将整个数组以 `WARNING` 记录，所以使用非英文主标签名的用户每次查找都会看到虚假的噪音。匹配 `is used as alias for` 的提示现在以 `DEBUG` 记录；真实错误仍以 `WARNING` 记录。
+
+**生成媒体库封面上 CJK 字形**（#25 问题 1b）
+
+- 标签组虚拟媒体库封面生成器（`util/images.py`）使用带 DejaVu Sans Bold 的 PIL，其缺少 CJK 字形——中文/日文/韩文标签名在封面上渲染为豆腐块（`[ ] [ ]`）。在标签包含 CJK / 半角全角范围内任何字符（码点 ≥ 0x2E80）时，新增了优先使用的 CJK 可用字体路径列表。纯拉丁标签继续使用 DejaVu，所以现有封面在视觉上不变。
+- **Dockerfile：** 新增 `fonts-noto-cjk`，使 Noto Sans CJK Bold TTC 在容器内可用。原生（非 Docker）安装需要自行安装 CJK 字体；选择器会在标准系统路径自动找到 Noto CJK、PingFang 或 Hiragino Sans GB。
 
 ### v7.3.2
 
-Fixes issue [#24](https://github.com/feldorn/Stash-Jellyfin-Proxy/issues/24) — `UnicodeDecodeError` on Windows native runs (Docker users were never affected). Reported by @stashcollection14 with the exact one-line fix.
+修复问题 #24——Windows 原生运行时的 `UnicodeDecodeError`（Docker 用户从未受影响）。由 @stashcollection14 报告，并给出确切的单行修复。
 
-**Root cause**
-- Python's `Path.read_text()` and `open(path, 'r')` default to the platform's preferred encoding when none is supplied. On Linux/macOS that's UTF-8; on Windows it's `cp1252`, which can't decode the eyeball emojis (👁 / 🙈) the v7.2.0 dashboard template introduced for the Connect-a-Player password reveal. The proxy crashed at module import on Windows with `'charmap' codec can't decode byte 0x81`.
+**根因**
 
-**Fix**
-- Added `encoding='utf-8'` to every text-mode file open/read/write in the production code: the dashboard template (the reported site), config file reads and writes (loader, writer, helpers, migration, the v7.3.1 heal-append, dashboard config saver, banned-IPs writer), the log-tail reader, the stats JSON, and the auth debug dump. The same latent bug lived in 16 places; the reporter just happened to hit the one that crashes at import. Anything that reads or writes user-content text now decodes/encodes UTF-8 explicitly regardless of platform.
-- Regression test: `tests/unit/test_encoding.py` locks that `index.html` contains bytes that `cp1252` can't decode, so removing the explicit `encoding='utf-8'` from `ui/api.py` would re-introduce the crash on Windows and fail CI.
+- Python 的 `Path.read_text()` 与 `open(path, 'r')` 在未提供编码时使用平台的首选编码。在 Linux/macOS 上是 UTF-8；在 Windows 上是 `cp1252`，其无法解码 v7.2.0 仪表盘模板为「连接播放器」密码揭示引入的眼球 emoji（👁 / 🙈）。代理在 Windows 模块导入时崩溃，报错 `'charmap' codec can't decode byte 0x81`。
+
+**修复**
+
+- 在生成代码中每次文本模式文件打开/读取/写入都加上 `encoding='utf-8'`：仪表盘模板（被报告的代码点）、配置文件读写（加载器、写入器、辅助函数、迁移、v7.3.1 的 heal-append、仪表盘配置保存器、封禁 IP 写入器）、日志尾读取器、统计 JSON、认证调试转储。同样的潜在 bug 存在于 16 处；报告者恰好命中了导入时崩溃的那一处。任何读取或写入用户内容文本的地方现在都显式按 UTF-8 解码/编码，与平台无关。
+- 回归测试：`tests/unit/test_encoding.py` 锁住 `index.html` 包含 `cp1252` 无法解码的字节，所以从 `ui/api.py` 移除显式 `encoding='utf-8'` 会在 Windows 上重新引入崩溃并使 CI 失败。
 
 ### v7.3.1
 
-Closes a gap from v7.3.0: existing v2 installs upgrading to v7.3.0 wouldn't see the new `[player.roku]` profile in their config or the Players tab, because `V2_DEFAULT_PLAYERS` is only consulted during the one-time v1→v2 migration that those installs already ran. Any later release adding a default profile would be invisible to them.
+关闭 v7.3.0 的一个缺口：现有的 v2 安装升级到 v7.3.0 时不会在其配置或播放器标签页中看到新的 `[player.roku]` 配置档，因为 `V2_DEFAULT_PLAYERS` 仅在那些安装已经运行过的一次性 v1→v2 迁移期间被查询。任何后续添加默认配置档的发布对它们都是不可见的。
 
-- **Startup heal for missing default player profiles.** After the schema-migration short-circuit (config already at `CONFIG_VERSION = 2`), check `V2_DEFAULT_PLAYERS` for any sections missing from the user's config and append them. Idempotent, additive-only — never modifies or removes existing sections, so a hand-customized `[player.roku]` survives untouched. No-op when the config is read-only (logs the issue and continues). Treats `V2_DEFAULT_PLAYERS` as a living "every install should have" list rather than a frozen v1→v2 snapshot.
+- **缺失默认播放器配置档的启动修复。** 在 schema 迁移短路（配置已为 `CONFIG_VERSION = 2`）之后，检查 `V2_DEFAULT_PLAYERS` 中用户配置缺少的任何区段并追加它们。幂等、仅追加——绝不修改或移除现有区段，所以手动自定义的 `[player.roku]` 原样保留。当配置只读时为无操作（记录问题并继续）。将 `V2_DEFAULT_PLAYERS` 视为一个鲜活的「每个安装都应拥有」列表，而非冻结的 v1→v2 快照。
 
 ### v7.3.0
 
-Roku Jellyfin app support plus a path-matching bug that affected any client sending fully-lowercase URLs. All four commits authored by [@arsfeld](https://github.com/arsfeld) and pulled in from his fork.
+Roku Jellyfin 应用支持，加上一个影响任何发送全小写 URL 的客户端的路径匹配 bug。全部四个提交由 @arsfeld 创作，从其 fork 拉入。
 
-**Roku support**
-- New `[player.roku]` profile (landscape posters, BoxSet performer type) — only added on fresh installs / v1→v2 migration; existing v2 installs need to add it via the Players tab.
-- Four new endpoint stubs the Roku app probes that the iOS-only clients don't: `/System/Configuration/Encoding` (advertises direct-play-only, no transcoding), `/Items/{id}/Images/Logo[/{index}]` (404 quietly — Stash has no logo concept), `/Items/{id}/Images` (advertises Primary + Backdrop; an empty list crashes the Roku app on the detail screen), and an explicit `/Items/Suggestions` route (previously matched `/Items/{item_id}` with `item_id="Suggestions"` and got shipped to Stash GraphQL as a numeric id).
+**Roku 支持**
 
-**Path normalization (affects all clients)**
-- `CaseInsensitivePathMiddleware` previously only ran template matching when the request path differed from its lowercase form, so any client sending fully-lowercase paths (`/items/scene-11/images`) silently bypassed both the static map and template matcher and fell through to `catch_all`. Roku does this; other clients may too. Now always runs template matching on static-map miss.
-- Trailing-slash fallback: `/items/?…` now matches the registered `/Items` route. Routes explicitly registered with a trailing slash (`/Playlists/`) still resolve via the first lookup, so the fallback can't shadow them.
+- 新的 `[player.roku]` 配置档（横版海报、BoxSet 演员类型）——仅在全新安装 / v1→v2 迁移时添加；现有的 v2 安装需要通过播放器标签页添加它。
+- Roku 应用探测的四个新端点桩，仅 iOS 客户端不探测：`/System/Configuration/Encoding`（声明仅直接播放、无转码）、`/Items/{id}/Images/Logo[/{index}]`（静默 404——Stash 没有 logo 概念）、`/Items/{id}/Images`（声明 Primary + Backdrop；空列表会在详情屏使 Roku 应用崩溃）、以及显式的 `/Items/Suggestions` 路由（之前匹配 `/Items/{item_id}`，`item_id="Suggestions"` 并作为数字 id 被发往 Stash GraphQL）。
 
-**Playback diagnostics**
-- `PlaybackInfo` entry, `PlaybackInfo` response (with container/codec/resolution/bitrate/duration/sub-count), and stream-endpoint entry promoted from DEBUG to INFO. Production INFO logs now show a three-line trace of every playback attempt instead of a silent gap between client navigation and the existing `▶ Stream started` marker. Useful for diagnosing Roku/Streamyfin direct-play-vs-transcode failures.
+**路径规范化（影响所有客户端）**
+
+- `CaseInsensitivePathMiddleware` 之前仅在请求路径与其小写形式不同时才运行模板匹配，所以任何发送全小写路径（`/items/scene-11/images`）的客户端静默绕过了静态映射和模板匹配器，落到 `catch_all`。Roku 这样做；其他客户端也可能。现在在静态映射未命中时总是运行模板匹配。
+- 尾部斜杠兜底：`/items/?…` 现在匹配注册的 `/Items` 路由。显式以尾部斜杠注册的路由（`/Playlists/`）仍通过首次查找解析，所以兜底不会遮蔽它们。
+
+**播放诊断**
+
+- `PlaybackInfo` 入口、`PlaybackInfo` 响应（含封装格式/编解码器/分辨率/码率/时长/字幕数）、以及串流端点入口从 DEBUG 提升到 INFO。生产 INFO 日志现在显示每次播放尝试的三行追踪，而非客户端导航与现有 `▶ Stream started` 标记之间的静默间隙。有助于诊断 Roku/Streamyfin 直接播放 vs 转码的失败。
 
 ### v7.2.0
 
-New "Connect a Player" surface on the dashboard and a configurable public address, so the credentials and server URL a player needs are visible in one place instead of scattered across the config.
+仪表盘上新的「连接播放器」界面与可配置的公共地址，使播放器所需的凭据和服务器 URL 在一处可见，而非分散在配置中。
 
-**Connect a Player**
-- Dashboard header button opens a "Connect a Player" modal showing the server address, username, and password, each with a copy button. The password is masked with an eyeball reveal toggle and re-masks when the modal closes. Surfaced as an occasional-use popup rather than an always-on dashboard card.
+**连接播放器**
 
-**Public URL**
-- New `PUBLIC_URL` config key (Connection → Public Address, live — no restart) for the externally-reachable Jellyfin API address. The proxy can't auto-detect this — its own IP is an internal Docker address and, behind a reverse proxy like SWAG, the public host/scheme/port live in the proxy — so the Connect card shows the server address only once `PUBLIC_URL` is set, with a prompt otherwise. No misleading auto-guessed address.
+- 仪表盘头部按钮打开「连接播放器」模态框，显示服务器地址、用户名与密码，每个都带复制按钮。密码以眼球揭示开关掩码，并在模态框关闭时重新掩码。作为偶用弹窗而非常驻仪表盘卡片展示。
 
-**Secret reveal**
-- API Key and Client Password fields on the Connection tab gain an eyeball reveal. Since the form leaves secret inputs blank so "blank = unchanged" holds on save, revealing lazily fetches the real value from a new allowlisted `GET /api/config/reveal` endpoint and hiding clears it again — typing a new value keeps the edit.
+**公共 URL**
 
-**Fixes**
-- Download Config now works behind a reverse proxy: replaced the top-level `window.location` navigation (which SWAG can intercept and which dropped the same-origin context) with a credentialed `fetch` → Blob download that parses the filename from `Content-Disposition`.
+- 新的 `PUBLIC_URL` 配置键（连接 → 公共地址，实时——无需重启）用于外部可达的 Jellyfin API 地址。代理无法自动检测此地址——它自己的 IP 是内部 Docker 地址，且在 SWAG 等反向代理之后，公共主机/协议/端口存在于代理上——所以连接卡片仅在设置了 `PUBLIC_URL` 后才显示服务器地址，否则显示提示。没有误导性的自动猜测地址。
+
+**密钥揭示**
+
+- 连接标签页上的 API 密钥与客户端密码字段获得眼球揭示。由于表单将密钥输入留空以使「留空 = 不变」在保存时成立，揭示会惰性地从新的白名单 `GET /api/config/reveal` 端点获取真实值，隐藏时再次清除——输入新值则保留编辑。
+
+**修复**
+
+- 下载配置现在在反向代理后可用：将顶层 `window.location` 导航（SWAG 可拦截并丢弃同源上下文）替换为带凭据的 `fetch` → Blob 下载，从 `Content-Disposition` 解析文件名。
 
 ### v7.1.7
 
-Issue #16 (SERVER_ID rotation) + issue #17 (favorites in Infuse) — bundled because the root cause of #17 turned out to be the same family of config-writer bugs as #16.
+问题 #16（SERVER_ID 轮换）+ 问题 #17（Infuse 中的收藏）——打包在一起，因为 #17 的根因被证明与 #16 同属配置写入器的 bug 家族。
 
-**Favorites**
-- Case-insensitive comparison for `FAVORITE_TAG`. Configuring `FAVORITE_TAG=FAVORITE` against an existing Stash tag named `Favorite` had silently broken `IsFavorite` reads — the proxy applied the tag correctly (Stash's tag lookup is case-insensitive) but on read returned False, so Infuse never reflected the favorite back and never sent a remove.
-- Toggle handlers no longer claim success when the Stash write fails (e.g. tag couldn't be created); the response now reflects the actual prior state.
+**收藏**
 
-**Config writer**
-- Dashboard saves of brand-new keys now insert at global scope (just before the first `[section]` header, above any `# ==== ... ====` divider). Previously the new-key branch appended at the end of the file, where the loader binds `KEY = VALUE` into the trailing section's dict — so a freshly-set `FAVORITE_TAG` ended up as `cfg_sections["player.default"]["FAVORITE_TAG"]` and was invisible at runtime. Insertion logic shared between `save_config_value` (one-key writes) and the dashboard handler (bulk writes) via a `find_global_insert_idx` helper.
-- Heal-on-read pre-pass: when the dashboard handler reads the config, it strips any line for a known global key sitting inside a `[section]` block and logs `Hoisting misplaced global key out of [...]: <KEY>`. The next save re-inserts at global scope, so existing files self-heal.
-- Comment dedup so per-boot rewrites of `CONFIG_LAST_BOOT_AT` don't accumulate copies of the same comment line.
-- Blank-line drift (one extra blank per restart) collapsed before write.
+- `FAVORITE_TAG` 的大小写不敏感比较。配置 `FAVORITE_TAG=FAVORITE` 对应现有名为 `Favorite` 的 Stash 标签，曾静默破坏 `IsFavorite` 读取——代理正确应用了标签（Stash 的标签查找大小写不敏感）但在读取时返回 False，所以 Infuse 从未反映回收藏，也从未发送移除。
+- 当 Stash 写入失败（例如标签无法创建）时，切换处理器不再声称成功；响应现在反映实际的前置状态。
 
-**Config persistence diagnostics**
-- `SERVER_ID` and `ACCESS_TOKEN` are persisted on first generation (was being regenerated every boot in v7.0.0, breaking client reconnects — issue #16).
-- Cross-restart persistence detector: bootstrap writes `CONFIG_LAST_BOOT_AT` every boot and a one-time `CONFIG_PERSISTENCE_INTRODUCED` marker. Combined with whether `SERVER_ID` was loaded, classify the file as `persisted` / `not_persistent` / `not_writable` / `unverified` and surface on the dashboard. Catches anonymous-volume / tmpfs / missing `/config` mount scenarios that look like save bugs from the user's side. The previous `os.access + open(r+)` writability probe is replaced by a save-and-read-back round trip.
-- New dashboard banners for `not_writable` (existing) and `not_persistent` (new), each pointing at the likely cause.
+**配置写入器**
 
-**Version reporting**
-- Single `__version__` constant in `stash_jellyfin_proxy/__init__.py`. Dashboard `/api/status`, startup log banner, and HTML brand badge all read it; previously three independent hardcoded strings had drifted across releases (dashboard stuck at v7.0.0, startup banner stuck at v7.1.1).
+- 仪表盘保存全新键现在插入到全局作用域（在第一个 `[section]` 头部之前，任何 `# ==== ... ====` 分隔线之上）。之前新键分支追加到文件末尾，加载器将那里的 `KEY = VALUE` 绑定到尾部区段的字典——所以刚设置的 `FAVORITE_TAG` 最终变成 `cfg_sections["player.default"]["FAVORITE_TAG"]`，在运行时不可见。插入逻辑通过 `find_global_insert_idx` 辅助函数在 `save_config_value`（单键写入）与仪表盘处理器（批量写入）间共享。
+- 读取时修复预扫描：当仪表盘处理器读取配置时，它会剥离任何位于 `[section]` 块内、属于已知全局键的行，并记录 `Hoisting misplaced global key out of [...]: <KEY>`。下一次保存会重新插入到全局作用域，所以现有文件自愈。
+- 注释去重，使 `CONFIG_LAST_BOOT_AT` 的每次启动重写不会累积同一注释行的副本。
+- 写入前折叠空行漂移（每次重启多一个空行）。
+
+**配置持久化诊断**
+
+- `SERVER_ID` 与 `ACCESS_TOKEN` 在首次生成时持久化（在 v7.0.0 中每次启动都重新生成，破坏了客户端重连——问题 #16）。
+- 跨重启持久化检测器：引导时每次启动写入 `CONFIG_LAST_BOOT_AT` 和一次性的 `CONFIG_PERSISTENCE_INTRODUCED` 标记。结合是否加载了 `SERVER_ID`，将文件分类为 `persisted` / `not_persistent` / `not_writable` / `unverified` 并在仪表盘展示。捕获匿名卷 / tmpfs / 缺失 `/config` 挂载等从用户侧看像保存 bug 的情况。之前的 `os.access + open(r+)` 可写性探测被保存并回读往返取代。
+- 仪表盘新增 `not_writable`（现有）与 `not_persistent`（新）横幅，各指向可能的原因。
+
+**版本报告**
+
+- `stash_jellyfin_proxy/__init__.py` 中的单一 `__version__` 常量。仪表盘 `/api/status`、启动日志横幅与 HTML 品牌徽章都读取它；之前三个独立硬编码字符串在各版本间漂移（仪表盘停在 v7.0.0，启动横幅停在 v7.1.1）。
 
 ### v7.1.0
 
-**Playlists**
-- New `Playlists` library backed by a configurable parent tag (`PLAYLIST_PARENT_TAG`, default `Playlists`). Each direct child of that tag is one playlist; the scenes carrying that child tag are its items.
-- Full Jellyfin `PlaylistsController` surface: create, rename, add/remove items, delete, list users — every mutation guarded so only tags that are direct children of the configured parent can be touched.
-- Per-client rendering: native `Playlist` type for Infuse and the Jellyfin web client (full create/edit/delete UI); `BoxSet` shape for Swiftfin and SenPlayer (their UI lacks a native Playlist renderer — they can browse and play but not manage). Profile flag `playlist_native` overrides per-client if needed.
-- Playlist tiles render as scene-screenshot composites with the playlist name as label overlay (same look as TAG_GROUPS).
-- The playlist parent tag and its children are auto-hidden from the generic Tags listing, search hints, and per-scene Tags / Genres so the marker tags don't bleed into the rest of the UI.
+**播放列表**
+
+- 新的 `Playlists` 库，由可配置父标签（`PLAYLIST_PARENT_TAG`，默认 `Playlists`）支撑。该标签的每个直接子标签就是一份播放列表；携带该子标签的场景即为其条目。
+- 完整的 Jellyfin `PlaylistsController` 表面：创建、重命名、添加/移除条目、删除、列出用户——每个变更都有保护，使得只有配置父标签的直接子标签可被触碰。
+- 按客户端渲染：Infuse 与 Jellyfin Web 客户端用原生 `Playlist` 类型（完整的创建/编辑/删除 UI）；Swiftfin 与 SenPlayer 用 `BoxSet` 形状（它们的 UI 缺少原生 Playlist 渲染器——可浏览和播放但无法管理）。配置档标志 `playlist_native` 在需要时按客户端覆盖。
+- 播放列表磁贴渲染为场景截图合成，播放列表名作为标签叠加（与 TAG_GROUPS 外观相同）。
+- 播放列表父标签及其子标签从通用标签列表、搜索提示与每场景的标签 / 流派中自动隐藏，使标记标签不渗入 UI 的其余部分。
 
 ### v7.0.0
 
-The largest release in the project's history — a multi-month refactor (Phases 0 → 5B) plus a wave of post-tag polish.
+该项目历史上最大的发布——多月的重构（阶段 0 → 5B）加上一波发布后的打磨。
 
-**Architecture & packaging**
-- **Now a proper Python package**. Run with `python -m stash_jellyfin_proxy` or the `stash-jellyfin-proxy` console script. The top-level `stash_jellyfin_proxy.py` launcher is gone — Dockerfile, compose, and CI all invoke the package. **Breaking change for users who pin the Docker `CMD` themselves**; published image is unaffected.
-- **Async httpx** throughout — `requests` is no longer a dependency. Streaming is true byte-range pass-through with `aiter_bytes()`.
-- Module layout broken out into `endpoints/`, `mapping/`, `middleware/`, `players/`, `stash/`, `state/`, `ui/`, `util/`, `config/`, `cache/`. Single source of truth in `runtime.py`.
-- Pure-ASGI request-logging middleware so streams aren't wrapped.
-- v1 → v2 config migration runs once at startup with a Web UI banner summarizing changes.
-- TTLCache live-tracks Stash connectivity instead of polling per request.
-- Global error contract (`StashUnavailable` / `StashError` / `BadRequest`) with consistent JSON shape.
-- Characterization test harness + 92 unit tests.
+**架构与打包**
 
-**Series support (Phase 2)**
-- Studios tagged `SERIES_TAG` are treated as TV series. Their scenes become Episodes everywhere — list, detail, image, search.
-- Per-client `series_collection_type`: Swiftfin → `tvshows` (native Series → Season → Episode nav via `/Shows/{id}/Seasons` + `/Shows/{id}/Episodes`); other clients → `movies` (flat BoxSet).
-- Episode-title parsing chain via `SERIES_EPISODE_PATTERNS` with a regex tester in the Web UI.
-- Studio/Series detail pages get full About metadata; Season tiles render landscape; Episode posters force landscape.
-- Auto-create tags is case-insensitive (config `Series` matches existing `series`).
+- **现在是一个正规的 Python 包**。用 `python -m stash_jellyfin_proxy` 或 `stash-jellyfin-proxy` 控制台脚本运行。顶层的 `stash_jellyfin_proxy.py` 启动器已移除——Dockerfile、compose 与 CI 都调用该包。**对已自行固定 Docker `CMD` 的用户是破坏性变更**；已发布的镜像不受影响。
+- **全程异步 httpx**——`requests` 不再是依赖。串流是真正的字节区间透传，使用 `aiter_bytes()`。
+- 模块布局拆分为 `endpoints/`、`mapping/`、`middleware/`、`players/`、`stash/`、`state/`、`ui/`、`util/`、`config/`、`cache/`。唯一事实来源在 `runtime.py`。
+- 纯 ASGI 请求日志中间件，使串流不被包裹。
+- v1 → v2 配置迁移在启动时运行一次，并在 Web UI 中以横幅提示变更摘要。
+- TTLCache 实时追踪 Stash 连接性，而非每次请求轮询。
+- 全局错误契约（`StashUnavailable` / `StashError` / `BadRequest`）带一致的 JSON 形状。
+- 特性描述测试工具 + 92 个单元测试。
 
-**Player profiles (Phase 2)**
-- Per-client behavior driven by `[player.*]` config sections — UA substring match, first-win, default fallback.
-- Profile controls `performer_item_type`, `scene_poster_format`, `series_collection_type`.
-- Unique UAs captured to `ua_log.json` and surfaced in the Web UI for one-click profile creation.
+**剧集支持（阶段 2）**
 
-**Imagery (Phase 3)**
-- Aspect-aware image endpoint with real portrait cropping and configurable anchor (`POSTER_CROP_ANCHOR`).
-- Studio logo preferred over scene screenshot in the SERIES fallback chain.
-- Library tiles redesigned: scene-screenshot background + 50% dim + label overlay, applied to library roots and TAG_GROUPS.
-- `ImageTag` rotation per process restart busts native client image caches.
+- 带有 `SERIES_TAG` 的制片商被视为电视剧。它们的场景在各处成为单集——列表、详情、图片、搜索。
+- 按客户端的 `series_collection_type`：Swiftfin → `tvshows`（通过 `/Shows/{id}/Seasons` + `/Shows/{id}/Episodes` 的原生「剧集 → 季 → 单集」导航）；其他客户端 → `movies`（扁平 BoxSet）。
+- 通过 `SERIES_EPISODE_PATTERNS` 的单集标题解析链，在 Web UI 中带 regex 测试器。
+- 制片商/剧集详情页获得完整的 About 元数据；季磁贴渲染横版；单集海报强制横版。
+- 自动创建标签大小写不敏感（配置 `Series` 匹配现有 `series`）。
 
-**Genres & filter panel (Phase 3 §7.1, Phase 4 §8.5)**
-- `GENRE_MODE`: `all_tags` / `parent_tag` / `top_n` with `GENRE_PARENT_TAG` / `GENRE_TOP_N`.
-- Swiftfin filter drawer: Years, Genres, Tags, Liked, Played — honored throughout `/Items` paths and search.
-- AND/OR genre logic; hierarchy-aware tag filter (depth: -1).
-- Genres + Tags sorted alphabetically in display and per-scene.
+**播放器配置档（阶段 2）**
 
-**Home / hero (Phase 4 §8.2, §8.4)**
-- `HERO_SOURCE` configurable across `recent` / `random` / `favorites` / `top_rated` / `recently_watched` with `HERO_MIN_RATING`.
-- Per-library default sort (`SCENES_DEFAULT_SORT`, `STUDIOS_DEFAULT_SORT`, etc.) for clients that don't specify SortBy.
-- Phase 4 §8 Home tab + filter panel + sort defaults + library art finalized.
+- 按客户端行为由 `[player.*]` 配置区段驱动——UA 子串匹配、首胜、默认兜底。
+- 配置档控制 `performer_item_type`、`scene_poster_format`、`series_collection_type`。
+- 独特 UA 捕获到 `ua_log.json` 并在 Web UI 中展示，支持一键创建配置档。
 
-**Metadata (Phase 3 §7.2)**
-- Sort article stripping (`SORT_STRIP_ARTICLES`) so "The X" sorts under X.
-- `OFFICIAL_RATING` exposed as a config key (default `NC-17`).
-- Scene metadata: full About panel content, taglines, parent-studio data on detail pages.
+**图片（阶段 3）**
 
-**Web UI (Phase 5A + 5B)**
-- 8-tab sidebar nav replacing the single-page UI: Dashboard, Connection, Libraries, Players, Playback, Search, System, Logs.
-- Live Test Connection probe, per-client Player Profile editor with live UA feed, client-side Series-Episode regex tester.
-- Real-time dashboard with active streams + top-played scenes + persisted lifetime stats.
-- HTML/CSS/JS extracted to template + `/static/app.css` + `/static/app.js`.
-- Save-behavior badges with consistent symbology and hover tooltips.
-- Logs tab with filter, download, and Copy button.
+- 感知宽高比的图像接口，带有真实竖版裁切和可配置锚点（`POSTER_CROP_ANCHOR`）。
+- 在 SERIES 兜底链中，制片商 Logo 优先于场景截图。
+- 媒体库磁贴重新设计：场景截图背景 + 50% 变暗 + 标签叠加，应用于媒体库根与 TAG_GROUPS。
+- 按进程重启的 `ImageTag` 轮换破除原生客户端图片缓存。
 
-**Post-tag polish**
-- Library-root `ImageTag` rotation extended to TAG_GROUPS tiles.
-- Swiftfin: filter params honored in search + global `/Items` paths; rail-probe leak fixed on studio + group pages; CollectionType + LATEST_GROUPS startup crash fixed; `/Shows` endpoints wired; performer page no longer shows 7 empty category rails.
-- SenPlayer: favorites toggle response now full `UserItemDataDto`; banner shows randomized scenes via `BANNER_MODE` / `BANNER_POOL_SIZE` / `BANNER_TAGS`.
-- Findroid / iPad clients: missing endpoints stubbed; ImageBlurHashes set on all BoxSet folder items.
-- Stop redirecting `/` to `/System/Info/Public` — the official Jellyfin app's startup probe relied on `/`.
-- Series root tile no longer renders blank (missing `MENU_ICONS` entry).
-- `/Items//` double-slash warning hardening.
+**流派与筛选面板（阶段 3 §7.1，阶段 4 §8.5）**
+
+- `GENRE_MODE`：`all_tags` / `parent_tag` / `top_n` 带 `GENRE_PARENT_TAG` / `GENRE_TOP_N`。
+- Swiftfin 筛选抽屉：年份、流派、标签、已喜欢、已播放——在 `/Items` 路径与搜索中全程遵守。
+- AND/OR 流派逻辑；感知层级的标签筛选（深度：-1）。
+- 流派 + 标签在显示与每场景中按字母排序。
+
+**首页 / 焦点图（阶段 4 §8.2，§8.4）**
+
+- `HERO_SOURCE` 可在 `recent` / `random` / `favorites` / `top_rated` / `recently_watched` 间配置，带 `HERO_MIN_RATING`。
+- 各媒体库默认排序（`SCENES_DEFAULT_SORT`、`STUDIOS_DEFAULT_SORT` 等）用于未指定 SortBy 的客户端。
+- 阶段 4 §8 首页标签页 + 筛选面板 + 排序默认值 + 媒体库美术定稿。
+
+**元数据（阶段 3 §7.2）**
+
+- 排序冠词剥离（`SORT_STRIP_ARTICLES`）使「The X」排在 X 下。
+- `OFFICIAL_RATING` 作为配置键暴露（默认 `NC-17`）。
+- 场景元数据：完整 About 面板内容、标签行、详情页上的父制片商数据。
+
+**Web UI（阶段 5A + 5B）**
+
+- 8 标签页侧边栏导航取代单页 UI：仪表盘、连接、媒体库、播放器、播放、搜索、系统、日志。
+- 实时测试连接探针、带实时 UA 反馈的按客户端播放器配置档编辑器、客户端侧剧集-单集 regex 测试器。
+- 实时仪表盘带活动串流 + 最热播场景 + 持久化累计统计。
+- HTML/CSS/JS 提取到模板 + `/static/app.css` + `/static/app.js`。
+- 保存行为徽章带一致的符号与悬停提示。
+- 日志标签页带筛选、下载与复制按钮。
+
+**发布后打磨**
+
+- 媒体库根 `ImageTag` 轮换扩展到 TAG_GROUPS 磁贴。
+- Swiftfin：筛选参数在搜索 + 全局 `/Items` 路径中遵守；制片商 + 合集页上的 rail 探测泄漏修复；CollectionType + LATEST_GROUPS 启动崩溃修复；`/Shows` 端点接线；演员页不再显示 7 个空白类别 rail。
+- SenPlayer：收藏切换响应现在为完整 `UserItemDataDto`；横幅通过 `BANNER_MODE` / `BANNER_POOL_SIZE` / `BANNER_TAGS` 显示随机场景。
+- Findroid / iPad 客户端：缺失端点桩化；所有 BoxSet 文件夹项设置 ImageBlurHashes。
+- 停止将 `/` 重定向到 `/System/Info/Public`——官方 Jellyfin 应用的启动探针依赖 `/`。
+- 剧集根磁贴不再渲染空白（缺失 `MENU_ICONS` 条目）。
+- `/Items//` 双斜杠警告加固。
 
 ### v6.02
-- **SenPlayer home banner**: SenPlayer's rotating banner is now driven by randomized scenes with screenshots — two modes, `recent` and `tag`, exposed via the Web UI.
-- **Unique per-scene `ImageTag` and `Etag`**: distinct `ImageTags.Primary` (`p<id>`) and `BackdropImageTags` (`b<id>`) per scene; `Etag` derived from play state so clients refetch when state changes.
-- **Favorite toggle fix**: `POST` / `DELETE` on `/Users/{userId}/FavoriteItems/{id}` (and the `UserFavoriteItems` aliases) returns a full `UserItemDataDto` so client UI reconciles without a navigation round-trip.
-- **DateLastContentAdded sort**: SenPlayer's default sort key for Studios / Performers / Groups now maps to `created_at`.
+
+- **SenPlayer 首页横幅**：SenPlayer 的轮播横幅现在由带截图的随机场景驱动——两种模式，`recent` 与 `tag`，通过 Web UI 暴露。
+- **按场景唯一的 `ImageTag` 与 `Etag`**：每个场景有独特的 `ImageTags.Primary`（`p<id>`）与 `BackdropImageTags`（`b<id>`）；`Etag` 派生自播放状态，使客户端在状态变化时重新获取。
+- **收藏切换修复**：`POST` / `DELETE` 在 `/Users/{userId}/FavoriteItems/{id}`（及 `UserFavoriteItems` 别名）返回完整 `UserItemDataDto`，使客户端 UI 无需导航往返即对账。
+- **DateLastContentAdded 排序**：SenPlayer 对制片商 / 演员 / 合集的默认排序键现在映射到 `created_at`。
 
 ### v6.01
-- **Group favorites** via the same `FAVORITE_TAG` tag-toggle approach used for scenes (`movieUpdate` mutation + `tags { name }` in every group query).
+
+- **合集收藏**通过用于场景的相同 `FAVORITE_TAG` 标签切换方法（`movieUpdate` 变更 + 每个合集查询中的 `tags { name }`）。
 
 ### v6.00
-- Multi-client support (Infuse, SenPlayer fully; Swiftfin and others partial — closed out completely in v7.0.0).
-- Full Swiftfin compatibility pass: `/UserFavoriteItems/` aliases, `ImageBlurHashes` on every BoxSet item.
-- Play / resume / watched sync — `play_count`, `resume_time`, `last_played_at` round-trip with Stash. >90% watched = auto-played + cleared resume.
-- Tag-based favorites for scenes (replaces the broken `organized` approach), native field for performers, `studioUpdate` for studios.
-- `RunTimeTicks` always present in `MediaSources`; stop handler resolves duration from Stash if the client posts 0.
-- Android client support: case-insensitive path middleware; `/ClientLog/Document` stub.
-- Rich `MediaStreams` metadata (codec, resolution, bitrate, frame rate, channel layout).
+
+- 多客户端支持（Infuse、SenPlayer 完全；Swiftfin 及其他部分——在 v7.0.0 完全收尾）。
+- 完整的 Swiftfin 兼容走查：`/UserFavoriteItems/` 别名、每个 BoxSet 项上的 `ImageBlurHashes`。
+- 播放 / 续播 / 已看同步——`play_count`、`resume_time`、`last_played_at` 与 Stash 往返。>90% 已看 = 自动已看 + 清除续播。
+- 场景基于标签的收藏（取代损坏的 `organized` 方法）、演员原生字段、制片商 `studioUpdate`。
+- `RunTimeTicks` 始终存在于 `MediaSources` 中；停止处理器在客户端发 0 时从 Stash 解析时长。
+- Android 客户端支持：大小写不敏感路径中间件；`/ClientLog/Document` 桩。
+- 丰富的 `MediaStreams` 元数据（编解码器、分辨率、码率、帧率、声道布局）。
 
 ### v5.04
-- Sort support across Performers / Studios / Groups / Tags / saved filters.
-- Removed genre/tag cap.
+
+- 跨演员 / 制片商 / 合集 / 标签 / 已保存筛选器的排序支持。
+- 移除流派/标签上限。
 
 ### v5.03
-- Partial-date ISO-8601 fix for scenes that previously failed to load.
-- Performer `PrimaryImageTag` set to null for performers without images.
+
+- 此前加载失败的场景的部分日期 ISO-8601 修复。
+- 无图片的演员将其 `PrimaryImageTag` 设为 null。
 
 ### v5.02
-- Rich `MediaStreams` metadata.
-- Subtitle delivery (SRT / VTT).
-- Saved Filters browsing.
-- Performer / Studio / Group image serving.
-- Tag-based library folders.
+
+- 丰富的 `MediaStreams` 元数据。
+- 字幕下发（SRT / VTT）。
+- 已保存筛选器浏览。
+- 演员 / 制片商 / 合集图片服务。
+- 基于标签的媒体库文件夹。
 
 ### v5.00
-- Initial release: Jellyfin API emulation, Stash GraphQL integration, Web UI, Docker.
 
-## License
+- 初始发布：Jellyfin API 模拟、Stash GraphQL 集成、Web UI、Docker。
 
-MIT — see `LICENSE`.
+## 许可证
+
+MIT —— 见 `LICENSE`。
