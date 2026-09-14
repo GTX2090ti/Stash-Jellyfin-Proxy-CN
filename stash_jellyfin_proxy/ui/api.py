@@ -552,6 +552,22 @@ _P5B_KEYS = [
     # Both are read per request, so they take effect without a restart.
     ("MULTI_FILE_SCENES",     "MULTI_FILE_SCENES",     "bool", False,        True),
     ("LIBRARY_PATH_MAP",      "LIBRARY_PATH_MAP",      "str",  "",           True),
+    # --- Metadata scraping / Identify (local fork) ---
+    # Bridges the client's Identify / Refresh-metadata actions to the scrapers
+    # already installed in Stash. ENABLE_SCRAPING is the master switch; the
+    # other two gate the parts of a scrape that *replace* existing data, so
+    # they can be turned off to keep identify-and-apply to plain text fields.
+    # All four are read per request → live, no restart needed.
+    ("ENABLE_SCRAPING",            "ENABLE_SCRAPING",            "bool", True, True),
+    ("SCRAPE_APPLY_RELATIONSHIPS", "SCRAPE_APPLY_RELATIONSHIPS", "bool", True, True),
+    ("SCRAPE_APPLY_IMAGES",        "SCRAPE_APPLY_IMAGES",        "bool", True, True),
+    ("SCRAPE_RESULT_TTL_SECONDS",  "SCRAPE_RESULT_TTL_SECONDS",  "int",  1800, True),
+    ("SCRAPE_NUMERIC_SCRAPERS",    "SCRAPE_NUMERIC_SCRAPERS",    "str",  "fantiajp,GetchuDL", True),
+    ("SCRAPE_NUMERIC_URL_TEMPLATES", "SCRAPE_NUMERIC_URL_TEMPLATES", "str",
+     "fantiajp=https://fantia.jp/posts/{id},getchudl=https://dl.getchu.com/i/item{id}", True),
+    ("SCRAPE_ATTEMPT_TIMEOUT_SECONDS", "SCRAPE_ATTEMPT_TIMEOUT_SECONDS", "int", 20, True),
+    ("SCRAPE_SEARCH_BUDGET_SECONDS", "SCRAPE_SEARCH_BUDGET_SECONDS", "int", 25, True),
+    ("SCRAPE_STASHBOX_ENABLED", "SCRAPE_STASHBOX_ENABLED", "bool", True, True),
     # --- Libraries (pass 4) ---
     ("GENRE_MODE",            "GENRE_MODE",            "str",  "parent_tag", False),
     ("GENRE_PARENT_TAG",      "GENRE_PARENT_TAG",      "str",  "GENRE",      False),

@@ -82,6 +82,49 @@ ENABLE_TAG_FILTERS: bool = False
 ENABLE_ALL_TAGS: bool = False
 REQUIRE_AUTH_FOR_CONFIG: bool = False
 
+# --- Metadata scraping / Identify (endpoints/metadata.py) ---
+# Master switch for the Jellyfin metadata endpoints that bridge to Stash's
+# own scrapers (MetadataEditor / RemoteSearch / Apply / RefreshMetadata /
+# Library-Refresh / UpdateItem / image upload). False makes the proxy
+# behave exactly as it did before the feature existed: no providers are
+# advertised and every write endpoint becomes a logged no-op 204.
+ENABLE_SCRAPING: bool = True
+# Resolve and write studio / performers / tags from a scraped payload.
+# These *replace* the existing association lists rather than merging, so
+# disable this to keep hand-curated relationships while still applying
+# scalar metadata (title, details, date, urls, images, performer fields).
+SCRAPE_APPLY_RELATIONSHIPS: bool = True
+# Write the scraper's cover image back to Stash on apply/refresh.
+SCRAPE_APPLY_IMAGES: bool = True
+# How long a RemoteSearch result stays applicable, keyed by the opaque
+# token handed to the client in ProviderIds["Stash"]. Seconds.
+SCRAPE_RESULT_TTL_SECONDS: int = 1800
+# Comma-separated scraper names/ids to try FIRST when the search term is a
+# bare number (Fantia post ids, Getchu product codes). Unknown names are
+# ignored; if none is installed the default provider order is kept.
+SCRAPE_NUMERIC_SCRAPERS: str = "fantiajp,GetchuDL"
+# How a bare number becomes a URL for the scrapers above, which are
+# FRAGMENT/URL-only and refuse "by name" lookups. Format:
+#   <scraper-name-substring>=<url-template with {id}>, ...
+# One scraper may list SEVERAL shapes for the same number, separated by `|`.
+# Fantia needs exactly that: /posts/<id> and /products/<id> are different
+# objects that share the id, so both are tried and then ranked against the
+# item's own words before either reaches the client.
+SCRAPE_NUMERIC_URL_TEMPLATES: str = (
+    "fantiajp=https://fantia.jp/posts/{id}|https://fantia.jp/products/{id},"
+    "getchudl=https://dl.getchu.com/i/item{id}"
+)
+# Cap on one scraper round-trip, and the overall budget for one search. A
+# scrape really does hit a third-party site per attempt; without these the
+# "search all providers" fan-out outlives the client's own request timeout.
+SCRAPE_ATTEMPT_TIMEOUT_SECONDS: int = 20
+SCRAPE_SEARCH_BUDGET_SECONDS: int = 25
+# Also query the configured stash boxes (StashDB, PMV Stash, ThePornDB, …)
+# on every "search all providers" Identify. The raw filename is normalised
+# first — `0541-LyaCutie-2160p` becomes the query `Lya Cutie` — because a
+# stash box answers people and scene titles, never catalogue noise.
+SCRAPE_STASHBOX_ENABLED: bool = True
+
 # --- Pagination / image cache sizing ---
 DEFAULT_PAGE_SIZE: int = 50
 MAX_PAGE_SIZE: int = 200

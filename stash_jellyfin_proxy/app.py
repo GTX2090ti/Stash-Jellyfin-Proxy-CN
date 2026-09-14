@@ -27,6 +27,17 @@ from stash_jellyfin_proxy.middleware.paths import CaseInsensitivePathMiddleware
 from stash_jellyfin_proxy.endpoints.images import endpoint_image
 from stash_jellyfin_proxy.endpoints.items import endpoint_items, endpoint_item_details
 from stash_jellyfin_proxy.endpoints.misc import endpoint_display_preferences, endpoint_websocket
+from stash_jellyfin_proxy.endpoints.metadata import (
+    endpoint_item_image_upload,
+    endpoint_library_refresh,
+    endpoint_metadata_editor,
+        endpoint_refresh_metadata,
+        endpoint_remote_search,
+        endpoint_remote_search_apply,
+        endpoint_remote_search_image,
+        endpoint_remote_search_post,
+        endpoint_update_item,
+    )
 from stash_jellyfin_proxy.endpoints.playback import endpoint_playback_info
 from stash_jellyfin_proxy.endpoints.search import (
     endpoint_items_counts,
@@ -193,6 +204,20 @@ routes = [
     # Must register before `/Items/{item_id}` below — otherwise "Suggestions"
     # is matched as item_id and shipped to Stash GraphQL as a numeric id.
     Route("/Items/Suggestions", endpoint_items_suggestions),
+    # --- Metadata scraping / Identify (endpoints/metadata.py) ---
+    # All of these carry literal segments ("RemoteSearch", "MetadataEditor")
+    # that the catch-all `/Items/{item_id}` routes further down would
+    # otherwise swallow as an item id.
+    Route("/Library/Refresh", endpoint_library_refresh, methods=["POST", "GET"]),
+    Route("/Items/RemoteSearch/Apply/{item_id}", endpoint_remote_search_apply, methods=["POST"]),
+    Route("/Items/RemoteSearch/{item_type}", endpoint_remote_search_post, methods=["POST"]),
+    Route("/Items/RemoteSearch/Image", endpoint_remote_search_image, methods=["GET", "HEAD"]),
+    Route("/Items/{item_id}/MetadataEditor", endpoint_metadata_editor),
+    # The classic refresh shape most clients still POST — must exist or the
+    # request falls through to the GET-only catch-all and 405s.
+    Route("/Items/{item_id}/Refresh", endpoint_refresh_metadata, methods=["POST", "GET"]),
+    Route("/Items/{item_id}/RefreshMetadata", endpoint_refresh_metadata, methods=["POST", "GET"]),
+    Route("/Items/{item_id}/RemoteSearch/{search_provider_name}", endpoint_remote_search, methods=["GET", "POST"]),
     Route("/Items/{item_id}/Download", endpoint_download),
     Route("/Items/{item_id}/PlaybackInfo", endpoint_playback_info, methods=["GET", "POST"]),
     Route("/Items/{item_id}/Similar", endpoint_similar),
@@ -238,6 +263,8 @@ routes = [
     Route("/Videos/{item_id}/{item_id2}/Subtitles/{subtitle_index}/Stream.srt", endpoint_subtitle),
     Route("/Videos/{item_id}/{item_id2}/Subtitles/{subtitle_index}/Stream.vtt", endpoint_subtitle),
     Route("/Items/{item_id}", endpoint_item_details),
+    # UpdateItem — write client-edited metadata back into Stash.
+    Route("/Items/{item_id}", endpoint_update_item, methods=["POST"]),
     Route("/Items/{item_id}/Images/Primary", endpoint_image),
     Route("/Items/{item_id}/Images/Thumb", endpoint_image),
     Route("/Items/{item_id}/Images/Backdrop", endpoint_image),
@@ -245,6 +272,9 @@ routes = [
     Route("/Items/{item_id}/Images/Logo", endpoint_item_image_logo, methods=["GET", "HEAD"]),
     Route("/Items/{item_id}/Images/Logo/{index}", endpoint_item_image_logo, methods=["GET", "HEAD"]),
     Route("/Items/{item_id}/Images", endpoint_item_images_list),
+    # Upload / delete of an item's own cover image (POST body = image bytes).
+    # Registered after the specific Image routes above so those keep priority.
+    Route("/Items/{item_id}/Images/{image_type}", endpoint_item_image_upload, methods=["POST", "DELETE"]),
     Route("/PlaybackInfo", endpoint_playback_info, methods=["POST", "GET"]),
     Route("/Sessions/Playing", endpoint_sessions, methods=["POST"]),
     Route("/Sessions/Playing/Progress", endpoint_sessions, methods=["POST"]),

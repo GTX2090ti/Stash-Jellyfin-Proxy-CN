@@ -145,7 +145,16 @@ async def stash_query(query: str, variables: Dict[str, Any] = None, retries: int
                 await asyncio.sleep(2 * (attempt + 1))
         except httpx.HTTPStatusError as e:
             last_error = e
-            logger.error(f"Stash API HTTP error: {e}")
+            # Log the body: Stash answers some malformed queries with a bare
+            # 400 and no GraphQL `errors` array, so the status alone looks like
+            # a transport fault and the real cause is invisible.
+            body = ""
+            try:
+                body = (e.response.text or "")[:400].replace("\n", " ")
+            except Exception:
+                pass
+            logger.error(f"Stash API HTTP error: {e}"
+                         + (f" — body: {body}" if body else ""))
             if 400 <= e.response.status_code < 500:
                 break
             if attempt < retries:
