@@ -41,7 +41,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=7.0.0,enable={{is_default_branch}}
+            type=raw,value=7.3.10,enable={{is_default_branch}}
 
       - name: Copy package to build context
         run: cp -r stash_jellyfin_proxy build_docker/

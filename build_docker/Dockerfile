@@ -1,8 +1,8 @@
 FROM python:3.11-slim-bookworm
 
-LABEL maintainer="Stash-Jellyfin Proxy"
-LABEL description="Jellyfin API emulation proxy for Stash media server"
-LABEL version="7.0.0"
+LABEL maintainer="GTX2090ti"
+LABEL description="Jellyfin API emulation proxy for Stash media server (CN branch: multi-file scenes, zh UI, scraping pipeline)"
+LABEL version="7.3.10"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -22,7 +22,8 @@ RUN pip install --no-cache-dir \
     hypercorn \
     starlette \
     httpx \
-    Pillow
+    Pillow \
+    setproctitle
 
 RUN mkdir -p /app /config && \
     chmod 755 /app /config
