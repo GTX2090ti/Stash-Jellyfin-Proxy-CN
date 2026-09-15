@@ -360,6 +360,29 @@ stash_jellyfin_proxy/
 
 > 以下 `CN.x` 为本分支的自研版本号（代码版本号保持上游 `7.3.10`），按时间倒序叠加在上游更新日志之前。
 
+### v7.3.10-CN.3 —— 多文件版本名带上真实文件名（自研）
+
+修复多文件（合并）场景在客户端版本选择器里的命名：此前版本名只有「分辨率 + 编码」
+（如两行一模一样的 `1080p H264`），文件名完全丢失——合并场景的多个文件只要分辨率和
+编码相同，用户就无法分辨哪行播的是哪个文件。
+
+**修复后的命名规则**（`mapping/scene.py::multi_file_source_title`，
+`format_jellyfin_item` 与 `endpoints/playback.py` 共用）：
+
+| 文件情况 | 版本名 |
+|---|---|
+| 有文件名 + 有探测数据 | `second.mp4 (1080p H264)` |
+| 有文件名、无探测数据 | `second.mp4` |
+| 两者都缺 | `File <fileId>` |
+| 同名冲突（不同目录同名文件） | 追加 `(#<fileId>)` 去重 |
+
+要点：主文件的 MediaSource 名也换成文件名（仅 `MULTI_FILE_SCENES` 开启且场景含多个
+文件时；单文件场景零变化）；客户端按 `Name` 区分版本行，跨源去重是硬要求。
+
+**测试**：`tests/unit/test_scene_mapping.py` 新增 5 个测试，共 273 个单元测试通过。
+
+详细说明见 [MULTIFILE-AND-I18N.md](MULTIFILE-AND-I18N.md) §2.8。
+
 ### v7.3.10-CN.2 —— 元数据刮削管线（自研）
 
 为代理补上 Stash 的刮削能力桥接：Jellyfin 客户端（手机 App 的 Identify / 刷新元数据）→ 代理 → Stash 已装社区刮削器 + 已配置的 Stash Box → 结果写回 Stash。
