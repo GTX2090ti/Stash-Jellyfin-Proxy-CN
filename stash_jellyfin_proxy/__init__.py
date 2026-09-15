@@ -18,7 +18,8 @@ runtime.py holds all shared config + mutable state (single source of
 truth; see its docstring).
 """
 
-# Single source of truth for the package version. Keep in sync with
-# pyproject.toml `[project].version`. The startup banner, dashboard
-# API, and HTML brand badge all read this constant.
-__version__ = "7.3.10"
+# Single source of truth for the package version. The startup banner,
+# dashboard API, and HTML brand badge all read this constant. The CN
+# suffix marks this branch's own release train (pyproject.toml keeps
+# the upstream base version; see README changelog for CN.x history).
+__version__ = "7.3.10-CN.3"

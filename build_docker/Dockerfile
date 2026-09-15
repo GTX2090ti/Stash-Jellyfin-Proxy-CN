@@ -2,7 +2,7 @@ FROM python:3.11-slim-bookworm
 
 LABEL maintainer="GTX2090ti"
 LABEL description="Jellyfin API emulation proxy for Stash media server (CN branch: multi-file scenes, zh UI, scraping pipeline)"
-LABEL version="7.3.10"
+LABEL version="7.3.10-CN.3"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
