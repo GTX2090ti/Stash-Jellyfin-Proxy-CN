@@ -84,6 +84,41 @@ def version_display_name(file_data: Dict[str, Any], fallback: str = "") -> str:
     return name or fallback
 
 
+def multi_file_source_title(
+    file_data: Dict[str, Any],
+    file_id: str,
+    taken: Optional[set] = None,
+) -> str:
+    """Version-picker label for one file of a multi-file scene.
+
+    The docs promise filename-based version names, and for good reason:
+    merged files routinely share resolution and codec, so the bare
+    '1080p H264' spec rendered as several indistinguishable picker rows
+    and the user had no way to tell which entry played which file.
+
+    The label is therefore '<basename> (<res> <CODEC>)' — or just the
+    basename when Stash has no probe data, or 'File <id>' when there is
+    neither. `taken` dedupes across the scene's sources: clients key
+    version rows on Name, so a collision would silently merge two files
+    into one picker entry.
+    """
+    base = os.path.basename(file_data.get("path") or "")
+    spec = version_display_name(file_data)
+    if base and spec:
+        name = f"{base} ({spec})"
+    elif base or spec:
+        name = base or spec
+    else:
+        name = f"File {file_id}"
+    if taken is not None and name in taken:
+        name = f"{name} (#{file_id})"
+        n = 2
+        while name in taken:
+            name = f"{name} #{n}"
+            n += 1
+    return name
+
+
 def build_media_source(
     file_data: Dict[str, Any],
     media_source_id: str,
@@ -520,7 +555,21 @@ def format_jellyfin_item(
         # MediaSource per additional file; endpoints/stream.py resolves the
         # `-f<fileId>` suffix back to the file and serves it off disk.
         if runtime.MULTI_FILE_SCENES and len(files) > 1:
-            for extra in files[1:]:
+            # Version-picker naming: every source — the primary included —
+            # is labelled with its real file name, not the scene title or
+            # a bare resolution spec. Merged files often share
+            # resolution+codec, so '1080p H264' gave the user no way to
+            # tell which picker row played which file. Clients key
+            # version rows on Name, so names are deduped across the
+            # scene. See multi_file_source_title.
+            taken = set()
+            names = []
+            for f in files:
+                label = multi_file_source_title(f, str(f.get("id") or "1"), taken)
+                taken.add(label)
+                names.append(label)
+            item["MediaSources"][0]["Name"] = names[0]
+            for extra, label in zip(files[1:], names[1:]):
                 extra_file_id = extra.get("id")
                 if not extra_file_id:
                     continue
@@ -528,10 +577,7 @@ def format_jellyfin_item(
                     build_media_source(
                         file_data=extra,
                         media_source_id=f"{item_id}-f{extra_file_id}",
-                        title=version_display_name(
-                            extra,
-                            os.path.basename(extra.get("path") or "") or title,
-                        ),
+                        title=label,
                     )
                 )
         # Web client's playbackManager reads MediaStreams / VideoType /

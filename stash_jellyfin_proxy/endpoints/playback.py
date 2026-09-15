@@ -13,7 +13,7 @@ import os
 from starlette.responses import JSONResponse
 
 from stash_jellyfin_proxy import runtime
-from stash_jellyfin_proxy.mapping.scene import build_media_source, version_display_name
+from stash_jellyfin_proxy.mapping.scene import build_media_source, multi_file_source_title
 from stash_jellyfin_proxy.stash.client import stash_query
 
 logger = logging.getLogger("stash-jellyfin-proxy")
@@ -183,8 +183,18 @@ async def endpoint_playback_info(request):
     # Multi-file scene (Stash "Merge"): advertise every file as its own
     # MediaSource so the client renders a version picker. Sources after the
     # first carry a `-f<fileId>` id that endpoints/stream.py resolves.
+    # Same naming rule as mapping/scene.format_jellyfin_item: every row —
+    # primary included — shows the file's real name (deduped), not the
+    # scene title or a bare '1080p H264' spec.
     if runtime.MULTI_FILE_SCENES and len(files) > 1:
-        for extra in files[1:]:
+        taken = set()
+        names = []
+        for f in files:
+            label = multi_file_source_title(f, str(f.get("id") or "1"), taken)
+            taken.add(label)
+            names.append(label)
+        media_source["Name"] = names[0]
+        for extra, label in zip(files[1:], names[1:]):
             extra_file_id = extra.get("id")
             if not extra_file_id:
                 continue
@@ -192,10 +202,7 @@ async def endpoint_playback_info(request):
                 build_media_source(
                     file_data=extra,
                     media_source_id=f"{item_id}-f{extra_file_id}",
-                    title=version_display_name(
-                        extra,
-                        os.path.basename(extra.get("path") or "") or (scene.get("title") or item_id),
-                    ),
+                    title=label,
                 )
             )
 

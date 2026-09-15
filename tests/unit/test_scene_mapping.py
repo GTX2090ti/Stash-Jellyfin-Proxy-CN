@@ -161,3 +161,80 @@ def test_video_stream_display_title_absent_when_no_dimensions():
     video = item["MediaStreams"][0]
     assert "DisplayTitle" not in video
     assert "Title" not in video
+
+
+# --- multi-file version-picker names -----------------------------------
+#
+# Merged files routinely share resolution and codec, so the old
+# spec-only label ('1080p H264') rendered as indistinguishable duplicate
+# rows. Every version row — primary included — must carry the file's
+# real basename (docs promise filename/resolution version names), and
+# names must be unique across the scene because clients key version rows
+# on Name.
+
+def _multi_file_scene():
+    return {
+        "id": "42",
+        "title": "Merged scene",
+        "date": "2024-01-01",
+        "files": [
+            {"id": "101", "path": "/data/a/first.mp4", "duration": 100.0,
+             "width": 1920, "height": 1080, "video_codec": "h264",
+             "audio_codec": "aac", "size": 10},
+            {"id": "102", "path": "/data/b/second.mp4", "duration": 200.0,
+             "width": 1920, "height": 1080, "video_codec": "h264",
+             "audio_codec": "aac", "size": 20},
+        ],
+        "tags": [],
+        "performers": [],
+        "studio": None,
+    }
+
+
+def test_multi_file_names_use_basenames(monkeypatch):
+    """Version rows show '<basename> (<res> <CODEC>)', primary included."""
+    monkeypatch.setattr(runtime, "MULTI_FILE_SCENES", True)
+    item = format_jellyfin_item(_multi_file_scene())
+    names = [s["Name"] for s in item["MediaSources"]]
+    assert names == ["first.mp4 (1080p H264)", "second.mp4 (1080p H264)"]
+    assert [s["Id"] for s in item["MediaSources"]] == ["scene-42", "scene-42-f102"]
+
+
+def test_multi_file_names_deduped_when_basenames_clash(monkeypatch):
+    """Same basename in two folders (Stash allows it) must not collapse
+    into one picker row — the client keys version rows on Name."""
+    scene = _multi_file_scene()
+    scene["files"][1]["path"] = "/data/other/first.mp4"
+    monkeypatch.setattr(runtime, "MULTI_FILE_SCENES", True)
+    item = format_jellyfin_item(scene)
+    names = [s["Name"] for s in item["MediaSources"]]
+    assert len(set(names)) == len(names)
+    assert names[1] == "first.mp4 (1080p H264) (#102)"
+
+
+def test_multi_file_name_without_probe_data(monkeypatch):
+    """No height/codec on the extra file → the bare basename is the
+    label, not a File <id> placeholder."""
+    scene = _multi_file_scene()
+    scene["files"][1] = {"id": "102", "path": "/data/b/third.mp4", "duration": 5.0}
+    monkeypatch.setattr(runtime, "MULTI_FILE_SCENES", True)
+    item = format_jellyfin_item(scene)
+    assert item["MediaSources"][1]["Name"] == "third.mp4"
+
+
+def test_multi_file_name_neither_basename_nor_probe(monkeypatch):
+    """Path missing entirely → fall back to a File <id> label so the row
+    is still selectable."""
+    scene = _multi_file_scene()
+    scene["files"][1] = {"id": "102", "duration": 5.0}
+    monkeypatch.setattr(runtime, "MULTI_FILE_SCENES", True)
+    item = format_jellyfin_item(scene)
+    assert item["MediaSources"][1]["Name"] == "File 102"
+
+
+def test_multi_file_disabled_keeps_title_and_single_source():
+    """Feature off → exactly one MediaSource named after the scene, the
+    pre-multi-file shape (characterization fixtures rely on this)."""
+    item = format_jellyfin_item(_multi_file_scene())
+    assert len(item["MediaSources"]) == 1
+    assert item["MediaSources"][0]["Name"] == "Merged scene"
