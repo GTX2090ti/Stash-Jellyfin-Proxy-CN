@@ -489,6 +489,11 @@ class TestTimeBudget:
 
         monkeypatch.setattr(metadata, "_fetch_stored_urls", no_stored_urls)
 
+        async def no_boxes():
+            return []
+
+        monkeypatch.setattr(metadata, "_load_stash_boxes", no_boxes)
+
         started = time.monotonic()
         assert asyncio.run(metadata._search("scene", "13", "", "Coconut")) == []
         elapsed = time.monotonic() - started
@@ -531,27 +536,35 @@ class TestTimeBudget:
 
         monkeypatch.setattr(metadata, "_fetch_stored_urls", no_stored_urls)
 
+        async def no_boxes():
+            return []
+
+        monkeypatch.setattr(metadata, "_load_stash_boxes", no_boxes)
+
         started = time.monotonic()
         assert asyncio.run(metadata._search("scene", "13", "", "Coconut")) == []
         elapsed = time.monotonic() - started
         assert elapsed < 3.0, "budget did not cap latency (%.2fs)" % elapsed
 
-    def test_first_wave_with_a_hit_returns_without_waiting(self, monkeypatch):
-        """The client shows one candidate list, so once any scraper answers the
-        response goes out — the slow ones are dropped, not waited on."""
+    def test_name_search_waits_for_the_slow_box_so_it_can_rank(self, monkeypatch):
+        """The stash boxes answer several seconds behind the fast web scrapers.
+        Breaking on the first winner used to cancel the in-flight box scrape,
+        which is how StashDB silently vanished from all-provider results. The
+        ranked top set is only full at _MAX_RANKED_RESULTS groups, so a name
+        search keeps collecting until then (the budget still caps latency)."""
         import asyncio
         import time
         from stash_jellyfin_proxy import runtime
         from stash_jellyfin_proxy.endpoints import metadata
 
-        async def fast_hit(entity, scraper_id, scrape_input):
-            if scraper_id == "slow":
-                await asyncio.sleep(20)
-                return []
-            return [{"title": "Found it", "code": "ABC-123"}]
+        async def boxy(entity, scraper_id, scrape_input):
+            if scraper_id == "slowbox":
+                await asyncio.sleep(1.5)
+                return [{"title": "the box hit", "code": "ABC-123"}]
+            return [{"title": "quick hit", "code": "ABC-123"}]
 
         providers = [
-            {"key": "slow", "id": "slow", "name": "Slow", "patterns": {},
+            {"key": "slowbox", "id": "slowbox", "name": "SlowBox", "patterns": {},
              "entities": ["scene"], "entities_any": ["scene"]},
             {"key": "quick", "id": "quick", "name": "Quick", "patterns": {},
              "entities": ["scene"], "entities_any": ["scene"]},
@@ -565,19 +578,77 @@ class TestTimeBudget:
                              "SCRAPE_ATTEMPT_TIMEOUT_SECONDS": 30}, raising=False)
         monkeypatch.setattr(metadata, "_providers", {"at": 1.0, "items": providers}, raising=False)
         monkeypatch.setattr(metadata, "_load_providers", fake_load)
-        monkeypatch.setattr(metadata, "_scrape", fast_hit)
+        monkeypatch.setattr(metadata, "_scrape", boxy)
 
         async def no_stored_urls(entity, numeric_id):
             return []
 
         monkeypatch.setattr(metadata, "_fetch_stored_urls", no_stored_urls)
 
+        async def no_boxes():
+            return []
+
+        monkeypatch.setattr(metadata, "_load_stash_boxes", no_boxes)
+
         started = time.monotonic()
         results = asyncio.run(metadata._search("scene", "13", "", "Coconut"))
         elapsed = time.monotonic() - started
 
-        assert [r["Name"] for r in results] == ["Found it"]
-        assert elapsed < 5.0, "waited %.2fs on the slow scraper" % elapsed
+        names = [r["Name"] for r in results]
+        assert "quick hit" in names and "the box hit" in names, names
+        assert elapsed > 1.0, "returned before the slow box landed (%.2fs)" % elapsed
+        assert elapsed < 10.0, "waited far past the box landing (%.2fs)" % elapsed
+
+    def test_name_search_stops_once_the_ranked_set_is_full(self, monkeypatch):
+        """The wait is bounded by the ranked top set: once _MAX_RANKED_RESULTS
+        groups have landed, remaining name-search scrapers are dropped rather
+        than waited on."""
+        import asyncio
+        import time
+        from stash_jellyfin_proxy import runtime
+        from stash_jellyfin_proxy.endpoints import metadata
+
+        async def scrape(entity, scraper_id, scrape_input):
+            if scraper_id == "hang":
+                await asyncio.sleep(20)
+                return []
+            return [{"title": f"hit {scraper_id}"}]
+
+        providers = [
+            {"key": "hang", "id": "hang", "name": "Hang", "patterns": {},
+             "entities": ["scene"], "entities_any": ["scene"]},
+        ] + [
+            {"key": f"p{i}", "id": f"p{i}", "name": f"P{i}", "patterns": {},
+             "entities": ["scene"], "entities_any": ["scene"]}
+            for i in range(3)
+        ]
+
+        async def fake_load():
+            return providers
+
+        monkeypatch.setattr(runtime, "config",
+                            {"SCRAPE_SEARCH_BUDGET_SECONDS": 30,
+                             "SCRAPE_ATTEMPT_TIMEOUT_SECONDS": 30}, raising=False)
+        monkeypatch.setattr(metadata, "_providers", {"at": 1.0, "items": providers}, raising=False)
+        monkeypatch.setattr(metadata, "_load_providers", fake_load)
+        monkeypatch.setattr(metadata, "_scrape", scrape)
+
+        async def no_stored_urls(entity, numeric_id):
+            return []
+
+        monkeypatch.setattr(metadata, "_fetch_stored_urls", no_stored_urls)
+
+        async def no_boxes():
+            return []
+
+        monkeypatch.setattr(metadata, "_load_stash_boxes", no_boxes)
+
+        started = time.monotonic()
+        results = asyncio.run(metadata._search("scene", "13", "", "Coconut"))
+        elapsed = time.monotonic() - started
+
+        assert len(results) == 3, results
+        assert elapsed < 5.0, "kept waiting after the ranked set was full (%.2fs)" % elapsed
 
     def test_documented_defaults(self, monkeypatch):
         from stash_jellyfin_proxy import runtime
@@ -1262,33 +1333,37 @@ class TestAttemptPriority:
         assert [p["title"] for _prov, payloads in winners for p in payloads] == \
             ["the correct post"]
 
-    def test_a_name_search_does_not_wait_for_other_name_searches(self, monkeypatch):
-        """The wait is only for targeted attempts. Otherwise the Identify
-        dialog would hang on the slowest scraper every time."""
+    def test_a_name_search_waits_for_slow_boxes_but_not_hangers(self, monkeypatch):
+        """Name searches collect until the ranked top set is full — the wait
+        is bounded by the budget/attempt timeouts, so a hanging scraper can
+        still not hold the dialog open past the budget."""
         import asyncio
         import time
         from stash_jellyfin_proxy import runtime
         from stash_jellyfin_proxy.endpoints import metadata
 
-        slow = self._mk("adulttime", "AdultTime", ["scene"])
+        hang = self._mk("hang", "Hang", ["scene"])
         quick = self._mk("javdb", "JavDB", ["scene"])
 
         async def scrape(entity, scraper_id, scrape_input):
-            if scraper_id == "adulttime":
+            if scraper_id == "hang":
                 await asyncio.sleep(20)
                 return []
             return [{"title": "quick hit"}]
 
-        monkeypatch.setattr(runtime, "config", {}, raising=False)
-        monkeypatch.setattr(metadata, "_providers", {"at": 1.0, "items": [slow, quick]})
+        monkeypatch.setattr(
+            runtime, "config",
+            {"SCRAPE_SEARCH_BUDGET_SECONDS": 3,
+             "SCRAPE_ATTEMPT_TIMEOUT_SECONDS": 30}, raising=False)
+        monkeypatch.setattr(metadata, "_providers", {"at": 1.0, "items": [hang, quick]})
         monkeypatch.setattr(metadata, "_scrape", scrape)
 
-        attempts = [(slow, {"query": "a"}), (quick, {"query": "a"})]
+        attempts = [(hang, {"query": "a"}), (quick, {"query": "a"})]
         started = time.monotonic()
         winners = asyncio.run(metadata._fan_out_within(
-            "scene", attempts, time.monotonic() + 30))
+            "scene", attempts, time.monotonic() + 3))
         assert [p["title"] for _prov, payloads in winners for p in payloads] == ["quick hit"]
-        assert time.monotonic() - started < 3.0
+        assert time.monotonic() - started < 10.0
 
 
 class TestNamedProviderAttempts:

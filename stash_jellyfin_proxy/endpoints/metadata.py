@@ -981,8 +981,15 @@ async def _fan_out_within(entity: str,
             # more than one can succeed (Fantia /posts/ and /products/ both
             # answer 200). Only once they have all landed can relevance decide
             # which of them actually describes this item.
-            if not any(_is_targeted(scrape_input)
-                       for _p, _i, scrape_input in pending.values()):
+            # The same logic — in reverse — governs plain name searches: the
+            # stash boxes answer several seconds slower than the fast web
+            # scrapers, so breaking on the first winner cancels an in-flight
+            # box scrape and StashDB silently vanishes from all-provider
+            # results. Keep collecting until the ranked top set is full
+            # (nothing left to wait for that could still outrank anything).
+            if (len(winners) >= _MAX_RANKED_RESULTS and not any(
+                    _is_targeted(scrape_input)
+                    for _p, _i, scrape_input in pending.values())):
                 break
             if not holding_logged:
                 holding_logged = True
