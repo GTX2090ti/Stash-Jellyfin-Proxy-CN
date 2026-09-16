@@ -438,8 +438,10 @@ def transform_saved_filter_to_graphql(object_filter, filter_mode="SCENES"):
 
 def _parse_filter_params(request):
     """Extract the multi-value filter params Jellyfin Web / Swiftfin send
-    on a filtered scene list. Returns (genres, tags, years) — each a
-    de-duplicated list."""
+    on a filtered scene list. Returns (genres, tags, years, studio_ids) —
+    genres/tags/years de-duplicated name lists, studio_ids the numeric Stash
+    studio ids implied by GenreIds entries of the shape "studio-<id>"
+    (Yamby's studio navigation, see the GenreIds comment below)."""
     qp = request.query_params
 
     def _multi(*keys):
@@ -473,7 +475,19 @@ def _parse_filter_params(request):
             if name and name not in genres:
                 genres.append(name)
 
-    return genres, tags, years
+    # Yamby navigates into a studio by querying the item list with
+    # GenreIds=studio-N (observed live 2026-09-16: tapping a studio tile
+    # fires /Users/{u}/Items?IncludeItemTypes=Movie,Series&GenreIds=studio-N
+    # — it never fetches /Users/{u}/Items/studio-N itself). Translate those
+    # into a Stash studios filter so the "studio page" lists the studio's
+    # scenes instead of an unfiltered/empty set.
+    studio_ids = [
+        raw_id[len("studio-"):]
+        for raw_id in _multi("GenreIds", "genreIds")
+        if raw_id.startswith("studio-") and raw_id[len("studio-"):].isdigit()
+    ]
+
+    return genres, tags, years, studio_ids
 
 
 async def _resolve_tag_ids(tag_names):
@@ -523,11 +537,19 @@ async def _filter_clause(request, filter_favorites: bool = False,
     Callers stitch parts together inside the scene_filter block. Favorites
     and Played/Unplayed can combine with Genres/Tags/Years — the proxy
     ANDs them via adjacent scene_filter fields."""
-    genres, tags, years = _parse_filter_params(request)
+    genres, tags, years, studio_ids = _parse_filter_params(request)
     all_names = list(dict.fromkeys(genres + tags))
 
     parts = []
     vars_ = {}
+
+    # Yamby's studio navigation sends GenreIds=studio-N (see
+    # _parse_filter_params). AND it in as a studios filter — a scene with
+    # that studio. Genres/tags filter ids can coexist in the same request,
+    # so this is an independent part, not a merge into all_names.
+    if studio_ids:
+        parts.append("studios: {value: $_filter_studio_ids, modifier: INCLUDES}")
+        vars_["_filter_studio_ids"] = studio_ids
 
     if all_names:
         tag_ids = await _resolve_tag_ids(all_names)
@@ -576,6 +598,9 @@ def _filter_var_defs(filter_vars: dict) -> tuple:
     if "_filter_fav_id" in filter_vars:
         defs.append("$_filter_fav_id: [ID!]")
         args.append("_filter_fav_id")
+    if "_filter_studio_ids" in filter_vars:
+        defs.append("$_filter_studio_ids: [ID!]")
+        args.append("_filter_studio_ids")
     return (", " + ", ".join(defs) if defs else "",
             ", " + ", ".join(args) if args else "")
 

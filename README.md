@@ -360,6 +360,27 @@ stash_jellyfin_proxy/
 
 > 以下 `CN.x` 为本分支的自研版本号，按时间倒序叠加在上游更新日志之前。自 v7.3.10-CN.3 起，应用内版本号（启动横幅、Web 界面右上角徽标、`/api/status`）会带上 `CN.x` 后缀。
 
+### v7.3.10-CN.4 —— Yamby 工作室导航修复（自研）
+
+两处针对「Yamby 点工作室跳到集合 / 不显示场景」的修复：
+
+1. **工作室条目类型**（758f3ef）：`Type=BoxSet` 的工作室会被 SenPlayer / Yamby
+   路由进客户端的「集合」视图。新增 `studio_type` 每客户端配置
+   （`players/profiles.py` + `mapping/image_policy.py::studio_item_type`），
+   SenPlayer / Yamby 默认发 `Type=Studio`（语义正确），Infuse 等仍为
+   `BoxSet + CollectionType=movies`。覆盖 `/Items/{id}`、root-studios、
+   saved-filter 工作室行与视图内工作室栏。
+2. **`GenreIds=studio-N` 导航**（本版）：开启 DEBUG 请求日志实测发现，Yamby
+   点工作室时并不请求 `/Users/{u}/Items/studio-N`，而是发
+   `GET /Users/{u}/Items?IncludeItemTypes=Movie,Series&GenreIds=studio-N&Recursive=true`
+   ——把工作室 id 塞进 GenreIds 里。此前该形状被静默丢弃，工作室页拿不到
+   该工作室的场景。现在 `_parse_filter_params` 识别 `studio-N` 形状并翻译成
+   Stash 的 `studios INCLUDES` 过滤（`endpoints/items.py`），流派
+   `genre-N` 形状不受影响。
+
+新增单测 `tests/unit/test_genreids_studio_filter.py`（6 个）+ 
+`test_studio_type_profiles.py`（5 个），全量 284 通过。
+
 ### v7.3.10-CN.3 —— 多文件版本名带上真实文件名（自研）
 
 修复多文件（合并）场景在客户端版本选择器里的命名：此前版本名只有「分辨率 + 编码」
