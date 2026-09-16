@@ -123,6 +123,34 @@ async def endpoint_grouping_options(request):
 # --- Item-detail companion stubs ---
 
 async def endpoint_similar(request):
+    """`GET /Items/{id}/Similar` — items belonging to / related to `item_id`.
+
+    Container-like proxy ids (studio-/performer-/group-/tagitem-) return the
+    scenes they own. Yamby builds a studio page from this rail, so the old
+    always-empty stub made every studio page look empty while the same
+    studio opened via the collection path listed its scenes. Scene ids keep
+    the empty response — Stash has no similar-scene relation.
+    """
+    item_id = request.path_params.get("item_id", "") or ""
+    if item_id.startswith(("studio-", "performer-", "group-", "tagitem-")):
+        from stash_jellyfin_proxy.endpoints.items import similar_items_for
+
+        def _int_param(*names, default):
+            for n in names:
+                raw = request.query_params.get(n)
+                if raw:
+                    try:
+                        return int(raw)
+                    except (TypeError, ValueError):
+                        continue
+            return default
+
+        limit = _int_param("Limit", "limit", default=20)
+        start_index = _int_param("StartIndex", "startIndex", default=0)
+        try:
+            return JSONResponse(await similar_items_for(item_id, limit, start_index))
+        except Exception as e:
+            logger.warning(f"Similar for {item_id} failed, returning empty: {e}")
     return JSONResponse({"Items": [], "TotalRecordCount": 0, "StartIndex": 0})
 
 

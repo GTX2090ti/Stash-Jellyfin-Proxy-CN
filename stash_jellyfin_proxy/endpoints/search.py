@@ -408,12 +408,21 @@ async def endpoint_studios(request):
             ]
             return JSONResponse({"Items": items, "TotalRecordCount": len(items), "StartIndex": 0})
 
-        count_q = """query { findStudios { count } }"""
+        # Hide studios with no scenes of their own — same rule the root-studios
+        # rail in items.py / views.py already applies. Stash keeps studios
+        # whose scenes were removed, plus ones a scraper created and never
+        # matched; they render as tiles that open onto an empty list, which
+        # reads as a broken entry to the user. `scene_count` counts direct
+        # scenes only, which is exactly what tapping the tile would show.
+        count_q = """query { findStudios(studio_filter: {scene_count: {value: 0, modifier: GREATER_THAN}}) { count } }"""
         count_res = await stash_query(count_q)
         total_count = count_res.get("data", {}).get("findStudios", {}).get("count", 0)
         page = (start_index // limit) + 1
         q = """query FindStudios($page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {
-            findStudios(filter: {page: $page, per_page: $per_page, sort: $sort, direction: $direction}) {
+            findStudios(
+                studio_filter: {scene_count: {value: 0, modifier: GREATER_THAN}},
+                filter: {page: $page, per_page: $per_page, sort: $sort, direction: $direction}
+            ) {
                 studios { id name image_path scene_count }
             }
         }"""

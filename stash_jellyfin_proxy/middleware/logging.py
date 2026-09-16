@@ -38,14 +38,19 @@ class RequestLoggingMiddleware:
         client = scope.get("client", ("unknown", 0))
         client_host = client[0] if client else "unknown"
 
-        # Log arrival (for in-flight visibility) before dispatching.
-        if path not in ("/", "/favicon.ico") and not path.startswith("/ui"):
-            full_path = f"{path}?{query_string}" if query_string else path
-            logger.debug(f"→ {scope.get('method', 'GET')} {full_path}")
-
+        # Header map first — the arrival line below tags every request with
+        # the client UA. Without it a multi-client household can't tell which
+        # app issued a request (Yamby / SenPlayer / Infuse all hit the same
+        # paths), which repeatedly sent debugging down the wrong client.
         headers = {}
         for key, value in scope.get("headers", []):
             headers[key.decode().lower()] = value.decode()
+
+        # Log arrival (for in-flight visibility) before dispatching.
+        if path not in ("/", "/favicon.ico") and not path.startswith("/ui"):
+            full_path = f"{path}?{query_string}" if query_string else path
+            ua = headers.get("user-agent", "")[:40]
+            logger.debug(f"→ {scope.get('method', 'GET')} {full_path} [ua={ua}]")
 
         is_stream = "/stream" in path.lower() or "/Videos/" in path
 

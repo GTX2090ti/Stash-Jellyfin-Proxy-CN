@@ -2,6 +2,42 @@
 
 > `CN.x` 为本分支自研版本号（倒序在上）；CN.3 起应用内版本号带 `CN.x` 后缀。CN.x 之前为上游（feldorn/Stash-Jellyfin-Proxy）的发布记录。
 
+### v7.3.10-CN.5 —— 工作室/厂商列表容器化修复（自研）
+
+围绕「厂商列表点进去没有视频 / 有的有有的没有 / 要点两次才进去」的一批修复：
+
+1. **空工作室过滤**（`endpoints/search.py`）：`/Studios` 此前没过滤
+   `scene_count=0` 的工作室（Stash 会保留孤儿条目的空壳与子工作室），于是
+   厂商列表里混进点进去永远为空的条目。现与 root-studios 栏、首页最新栏
+   统一为 `studio_filter: {scene_count: {value: 0, modifier: GREATER_THAN}}`，
+   NAS 实测 56 → 50，与 root-studios 栏数量一致。
+2. **容器型 `/Items/{id}/Similar`**（`endpoints/items.py` + `endpoints/stubs.py`）：
+   该端点原本是硬编码返回空数组的桩。实测 Yamby 打开工作室时**只**请求
+   `详情 + Similar + 封面`、从不请求子项列表，工作室页的内容实际来自
+   Similar —— 桩返回空即页面永远空白。现在 `studio-` / `performer-` /
+   `group-` / `tagitem-` 会委派 `similar_items_for()` 返回该容器的场景
+   （含分页与总量），`scene-N` 仍返回空、行为不变。
+3. **`StudioIds` 作为容器定位**（`endpoints/items.py`）：SenPlayer 第一次点击
+   厂商发的是 `Items?...&ParentId=root-studios&StudioIds=studio-N`（把工作室 id
+   当过滤器挂在虚拟根上），而旧代码只在**没有** ParentId 时才读 StudioIds，
+   于是第一次点击被丢弃 → 返回未过滤的厂商列表 → 表现为「要点两次才进
+   视频列表」。现在 ParentId 为空或是虚拟根（`root-*`）时以 StudioIds 为
+   权威容器定位；Roku 式「只用 StudioIds」的形状同时兼容。另把
+   `replace("studio-", "")` 全部改为 `removeprefix`（旧写法会造出
+   `studio-studio-N`，仅靠 replace 把两处前缀都吃掉才碰巧正确）。
+4. **请求日志带 UA**（`middleware/logging.py`）：请求到达行改为
+   `→ GET <path> [ua=...]`。多客户端（Yamby / SenPlayer / Infuse / Hills…）
+   打同一批路径时日志无法归因，此前已两次误判客户端，故补上。
+
+新增单测 `test_studios_empty_filter.py`（5 个）、
+`test_similar_container_items.py`（7 个）、`test_studioid_parent_redirect.py`（8 个），
+全量 304 通过；NAS 真机热补丁验证：第一次点击形状 `root-studios+StudioIds=studio-19`
+返回 226 条（原 50）、50 个工作室双路比对 0 个不一致。
+
+> 配置提示：Yamby 会把它不认识的 `Type=Studio` 详情页中的 Similar 渲染成
+> 「推荐」栏；若要它按文件夹方式列出工作室作品，可在配置里单独给它设
+> `[player.yamby] studio_type = Folder`（SenPlayer 保持 `Studio`）。
+
 ### v7.3.10-CN.4 —— Yamby 工作室导航修复（自研）
 
 两处针对「Yamby 点工作室跳到集合 / 不显示场景」的修复：

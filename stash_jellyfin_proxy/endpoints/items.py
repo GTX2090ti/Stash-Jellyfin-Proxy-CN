@@ -436,6 +436,39 @@ def transform_saved_filter_to_graphql(object_filter, filter_mode="SCENES"):
     return result
 
 
+def _normalize_studio_id(raw):
+    """Normalize a `StudioIds` query value into one of our studio container
+    ids. Clients echo back the id we emitted from /Studios (`studio-19`),
+    but a bare `19` shows up too (Roku, older SDKs). Anything else — most
+    importantly a real Jellyfin studio GUID — returns None so we never
+    invent a bogus container. The value may be a comma-separated list; the
+    studio branch is single-studio anyway, so the first entry wins."""
+    first = (raw or "").split(",")[0].strip()
+    if not first:
+        return None
+    if first.startswith("studio-"):
+        first = first[len("studio-"):]
+    return f"studio-{first}" if first.isdigit() else None
+
+
+def _effective_parent_id(parent_id, studio_ids_raw):
+    """Resolve the container to list items from, honouring the `StudioIds`
+    filter. Jellyfin's item API treats StudioIds as a *filter* on a list
+    request, so clients that navigate the studios folder emit
+    `ParentId=root-studios&StudioIds=studio-N` and expect that studio's
+    scenes back. SenPlayer does exactly this on the *first* tap of a studio
+    tile (observed live 2026-09-16 19:18); because we used to ignore
+    StudioIds whenever a ParentId was present, the response was the
+    unfiltered 50-studio list, the tap looked like a no-op, and the user
+    had to tap a second time (that tap carries ParentId=studio-N and
+    worked). So: StudioIds is authoritative whenever there is no ParentId
+    or the ParentId is one of our virtual root-* folders. Issue #29."""
+    studio_parent = _normalize_studio_id(studio_ids_raw)
+    if studio_parent and (not parent_id or parent_id.startswith("root-")):
+        return studio_parent
+    return parent_id
+
+
 def _parse_filter_params(request):
     """Extract the multi-value filter params Jellyfin Web / Swiftfin send
     on a filtered scene list. Returns (genres, tags, years, studio_ids) —
@@ -703,18 +736,16 @@ async def endpoint_items(request):
 
     user_id = request.path_params.get("user_id")
     # ParentId (canonicalized by CaseInsensitivePathMiddleware from every
-    # client casing). Also accept a bare StudioIds — some clients (Roku)
-    # filter by that alone rather than nesting the studio into ParentId —
-    # by mapping StudioIds=N to ParentId=studio-N. StudioIds may be a
-    # comma-separated list; we take the first (the studio- branch is
-    # single-studio anyway). Issue #27.
+    # client casing). `StudioIds` is folded in as an alternative way to
+    # reach a studio container — some clients (Roku) filter by it alone
+    # instead of nesting the studio into ParentId, others (SenPlayer) send
+    # both `ParentId=root-studios` and `StudioIds=studio-N` on the first
+    # tap. See _effective_parent_id. Issues #27, #29.
     parent_id = request.query_params.get("ParentId") or request.query_params.get("parentId")
-    if not parent_id:
-        studio_ids = request.query_params.get("StudioIds")
-        if studio_ids:
-            first_studio = studio_ids.split(",")[0].strip()
-            if first_studio:
-                parent_id = f"studio-{first_studio}"
+    parent_id = _effective_parent_id(
+        parent_id,
+        request.query_params.get("StudioIds") or request.query_params.get("studioIds"),
+    )
     ids = request.query_params.get("Ids") or request.query_params.get("ids")
 
     # Pagination parameters with validation
@@ -1536,7 +1567,10 @@ async def endpoint_items(request):
             items.append(studio_item)
 
     elif parent_id and parent_id.startswith("studio-"):
-        studio_id = parent_id.replace("studio-", "")
+        # removeprefix, not replace: the container id is always `studio-N`
+        # (normalized in _effective_parent_id), and a blanket replace would
+        # eat the `studio-` inside the Stash id too.
+        studio_id = parent_id.removeprefix("studio-")
 
         # Swiftfin's studio page (like its performer page) fires parallel
         # requests for Person, BoxSet+UserView, Movie, Video, MusicVideo,
@@ -2607,6 +2641,59 @@ async def _fetch_studio_packet(studio_id: str) -> Optional[Dict[str, Any]]:
     return out
 
 
+async def similar_items_for(item_id: str, limit: int = 20, start_index: int = 0) -> Dict[str, Any]:
+    """Items belonging to a container-like proxy id.
+
+    Backs `GET /Items/{id}/Similar` for `studio-` / `performer-` / `group-` /
+    `tagitem-` ids. Yamby renders a studio's works from the Similar rail of
+    the studio page — with the previous always-empty stub those pages came
+    up blank ("this studio has no videos") even though the very same studio
+    opened through the BoxSet/collection path listed its scenes fine.
+    Returning the owning scenes here fixes the studio page without changing
+    the item's declared Type (which clients also use for routing).
+
+    Non-container ids (scenes etc.) keep the old empty response — Stash has
+    no "similar scenes" relation to map.
+    """
+    from stash_jellyfin_proxy.stash.query_helpers import scene_filter_clause_for_parent
+
+    clause, cvars = scene_filter_clause_for_parent(item_id)
+    if not clause:
+        return {"Items": [], "TotalRecordCount": 0, "StartIndex": start_index}
+
+    limit = max(1, min(int(limit or 20), runtime.MAX_PAGE_SIZE))
+    start_index = max(0, int(start_index or 0))
+    page = (start_index // limit) + 1
+
+    scene_fields = ("id title code date details play_count resume_time last_played_at "
+                    "files { id path basename duration size video_codec audio_codec width height frame_rate bit_rate } "
+                    "studio { id name tags { name id } parent_studio { id name tags { name id } } } "
+                    "tags { name id } performers { name id image_path } "
+                    "captions { language_code caption_type } stash_ids { stash_id }")
+
+    count_q = f"""query CountSimilar($ids: [ID!]) {{
+        findScenes({clause}) {{ count }}
+    }}"""
+    count_res = await stash_query(count_q, cvars)
+    total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
+
+    q = f"""query FindSimilar($ids: [ID!], $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
+        findScenes(
+            {clause},
+            filter: {{page: $page, per_page: $per_page, sort: $sort, direction: $direction}}
+        ) {{
+            scenes {{ {scene_fields} }}
+        }}
+    }}"""
+    q_vars = dict(cvars)
+    q_vars.update({"page": page, "per_page": limit, "sort": "date", "direction": "DESC"})
+    res = await stash_query(q, q_vars)
+    scenes = res.get("data", {}).get("findScenes", {}).get("scenes", [])
+    items = [format_jellyfin_item(s, parent_id=item_id) for s in scenes]
+    logger.debug(f"Similar for {item_id}: {len(items)} items (page {page}, total {total_count})")
+    return {"Items": items, "TotalRecordCount": total_count, "StartIndex": start_index}
+
+
 async def endpoint_item_details(request):
     from stash_jellyfin_proxy.mapping.genre import genre_allowed_names
     await genre_allowed_names()
@@ -2851,7 +2938,7 @@ async def endpoint_item_details(request):
     elif item_id.startswith("studio-"):
         # Fetch actual studio info from Stash
         from stash_jellyfin_proxy.mapping.image_policy import studio_item_type
-        studio_id = item_id.replace("studio-", "")
+        studio_id = item_id.removeprefix("studio-")
         packet = await _fetch_studio_packet(studio_id)
         if not packet:
             return JSONResponse({"error": "Studio not found"}, status_code=404)

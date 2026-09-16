@@ -89,15 +89,18 @@ def scene_filter_clause_for_parent(parent_id):
     if not parent_id:
         return None, None
     if parent_id.startswith("performer-"):
-        pid = parent_id.replace("performer-", "")
+        pid = parent_id.removeprefix("performer-")
         return "scene_filter: {performers: {value: $ids, modifier: INCLUDES}}", {"ids": [pid]}
     if parent_id.startswith("studio-"):
-        sid = parent_id.replace("studio-", "")
+        # removeprefix, not replace — a blanket replace would also strip the
+        # prefix if it ever appeared inside the Stash id (`studio-studio-19`
+        # → `19` by accident before _effective_parent_id normalized inputs).
+        sid = parent_id.removeprefix("studio-")
         return "scene_filter: {studios: {value: $ids, modifier: INCLUDES}}", {"ids": [sid]}
     if parent_id.startswith("group-"):
-        gid = parent_id.replace("group-", "")
+        gid = parent_id.removeprefix("group-")
         return "scene_filter: {movies: {value: $ids, modifier: INCLUDES}}", {"ids": [gid]}
     if parent_id.startswith("tagitem-"):
-        tid = parent_id.replace("tagitem-", "")
+        tid = parent_id.removeprefix("tagitem-")
         return "scene_filter: {tags: {value: $ids, modifier: INCLUDES}}", {"ids": [tid]}
     return None, None

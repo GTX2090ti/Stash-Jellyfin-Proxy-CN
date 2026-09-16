@@ -1,6 +1,6 @@
 # Stash-Jellyfin Proxy（CN 分支）
 
-**当前版本 v7.3.10-CN.4** · 基于上游 [feldorn/Stash-Jellyfin-Proxy](https://github.com/feldorn/Stash-Jellyfin-Proxy) v7.3.10 · MIT
+**当前版本 v7.3.10-CN.5** · 基于上游 [feldorn/Stash-Jellyfin-Proxy](https://github.com/feldorn/Stash-Jellyfin-Proxy) v7.3.10 · MIT
 
 一个 Python 代理服务器，通过模拟 Jellyfin 的 HTTP API，让兼容 Jellyfin 的媒体播放器（Infuse / Swiftfin / SenPlayer 等）直接浏览并播放 [Stash](https://stashapp.cc/) 媒体库。
 
@@ -14,6 +14,7 @@
 | **配置界面中英双语** | Web 界面 8 个标签页全部支持中英切换，侧边栏一键切换；协议层零改动 | [MULTIFILE-AND-I18N.md](MULTIFILE-AND-I18N.md) |
 | **元数据刮削管线** | 打通手机 App 的 Identify / 刷新元数据：按名搜索、纯数字编号、URL 直刮三类入口，支持社区刮削器 + StashDB / ThePornDB | [SCRAPING-NOTES.md](SCRAPING-NOTES.md) |
 | **媒体库名汉化** | 客户端里的库分类名（场景 / 厂商 / 演员 / 分组 / 播放列表）已汉化 | — |
+| **客户端导航兼容** | 按客户端 UA 下发合适的条目类型（SenPlayer / Yamby → `Studio`，Infuse → `BoxSet`）；`GenreIds=studio-N` / `StudioIds` / `ParentId=studio-N` 等各客户端写法统一解析为容器定位；容器型 `/Similar` 返回该容器的作品；空工作室（0 场景）不下发 | [CHANGELOG.md](CHANGELOG.md) |
 
 ## 支持的客户端
 
