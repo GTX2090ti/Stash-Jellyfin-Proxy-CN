@@ -1063,14 +1063,15 @@ async def endpoint_items(request):
                     res = await stash_query(q, {"studio_filter": graphql_filter, "page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir})
                     studios = res.get("data", {}).get("findStudios", {}).get("studios", [])
                     logger.debug(f"Saved filter returned {len(studios)} studios (page {page}, total {total_count})")
+                    from stash_jellyfin_proxy.mapping.image_policy import studio_item_type as _sit
+                    _stype = _sit(request)
                     for s in studios:
                         studio_item = {
                             "Name": s["name"],
                             "Id": f"studio-{s['id']}",
                             "ServerId": runtime.SERVER_ID,
-                            "Type": "BoxSet",
+                            "Type": _stype,
                             "IsFolder": True,
-                            "CollectionType": "movies",
                             "ChildCount": s.get("scene_count", 0),
                             "RecursiveItemCount": s.get("scene_count", 0),
                             "ParentId": parent_id,
@@ -1080,6 +1081,8 @@ async def endpoint_items(request):
                             "PrimaryImageAspectRatio": 0.6667,
                             "BackdropImageTags": []
                         }
+                        if _stype == "BoxSet":
+                            studio_item["CollectionType"] = "movies"
                         items.append(studio_item)
 
                 elif filter_mode == "GROUPS":
@@ -1482,21 +1485,24 @@ async def endpoint_items(request):
             }
         }"""
         res = await stash_query(q, {"page": page, "per_page": fetch_limit, "sort": folder_sort, "direction": folder_dir})
+        from stash_jellyfin_proxy.mapping.image_policy import studio_item_type
+        stype = studio_item_type(request)
         for s in res.get("data", {}).get("findStudios", {}).get("studios", []):
             studio_item = {
                 "Name": s["name"],
                 "SortName": sort_name_for(s["name"]),
                 "Id": f"studio-{s['id']}",
                 "ServerId": runtime.SERVER_ID,
-                "Type": "BoxSet",
+                "Type": stype,
                 "IsFolder": True,
-                "CollectionType": "movies",
                 "ChildCount": s.get("scene_count", 0),
                 "RecursiveItemCount": s.get("scene_count", 0),
                 "PrimaryImageAspectRatio": 0.6667,
                 "BackdropImageTags": [],
                 "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": False, "Played": False, "Key": f"studio-{s['id']}"}
             }
+            if stype == "BoxSet":
+                studio_item["CollectionType"] = "movies"
             if s.get("image_path"):
                 studio_item["ImageTags"] = {"Primary": "img"}
                 studio_item["ImageBlurHashes"] = {"Primary": {"img": "000000"}}
@@ -2819,6 +2825,7 @@ async def endpoint_item_details(request):
 
     elif item_id.startswith("studio-"):
         # Fetch actual studio info from Stash
+        from stash_jellyfin_proxy.mapping.image_policy import studio_item_type
         studio_id = item_id.replace("studio-", "")
         packet = await _fetch_studio_packet(studio_id)
         if not packet:
@@ -2826,13 +2833,16 @@ async def endpoint_item_details(request):
         studio_name = packet.pop("_name")
         scene_count = packet.pop("_scene_count")
         is_favorite = packet.pop("_favorite")
+        # Type from the player profile: BoxSet-typed studios land in
+        # SenPlayer/Yamby's Collections view instead of the studio's
+        # scenes, so those clients get the native "Studio" kind.
+        stype = studio_item_type(request)
         out = {
             "Name": studio_name,
             "SortName": sort_name_for(studio_name),
             "Id": item_id,
             "ServerId": runtime.SERVER_ID,
-            "Type": "BoxSet",
-            "CollectionType": "movies",
+            "Type": stype,
             "IsFolder": True,
             "ImageTags": {"Primary": "img"},
             "ImageBlurHashes": {"Primary": {"img": "000000"}, "Backdrop": {"img": "000000"}},
@@ -2845,6 +2855,8 @@ async def endpoint_item_details(request):
                 "IsFavorite": is_favorite, "Played": False, "Key": item_id,
             },
         }
+        if stype == "BoxSet":
+            out["CollectionType"] = "movies"
         out.update(packet)
         return JSONResponse(out)
 

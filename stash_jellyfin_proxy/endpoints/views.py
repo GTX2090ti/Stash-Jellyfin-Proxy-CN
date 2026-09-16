@@ -667,14 +667,15 @@ async def endpoint_latest_items(request):
             }
         }"""
         res = await stash_query(q, {"page": 1, "per_page": limit})
+        from stash_jellyfin_proxy.mapping.image_policy import studio_item_type
+        stype = studio_item_type(request)
         for s in res.get("data", {}).get("findStudios", {}).get("studios", []):
             item = {
                 "Name": s["name"],
                 "Id": f"studio-{s['id']}",
                 "ServerId": runtime.SERVER_ID,
-                "Type": "BoxSet",
+                "Type": stype,
                 "IsFolder": True,
-                "CollectionType": "movies",
                 "ChildCount": s.get("scene_count", 0),
                 "PrimaryImageAspectRatio": 0.6667,
                 "BackdropImageTags": [],
@@ -684,6 +685,8 @@ async def endpoint_latest_items(request):
                     "Key": f"studio-{s['id']}",
                 },
             }
+            if stype == "BoxSet":
+                item["CollectionType"] = "movies"
             item["ImageTags"] = {"Primary": "img"} if s.get("image_path") else {}
             item["ImageBlurHashes"] = {"Primary": {"img": "000000"}} if s.get("image_path") else {}
             items.append(item)

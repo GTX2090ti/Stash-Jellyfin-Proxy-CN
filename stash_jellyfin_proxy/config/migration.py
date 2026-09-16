@@ -74,6 +74,13 @@ V2_DEFAULT_PLAYERS = [
         ("performer_type", "BoxSet"),
         ("poster_format", "portrait"),
     ]),
+    # Yamby (Android) — same compat line as SenPlayer; its profile matters
+    # mostly so studio_type=Studio applies via the profile sentinel.
+    ("player.yamby", [
+        ("user_agent_match", "Yamby"),
+        ("performer_type", "BoxSet"),
+        ("poster_format", "portrait"),
+    ]),
     # Roku Jellyfin app reports UA like "Roku/DVP-15.1 (15.1.4.3334-30)".
     # Landscape posters render better on a TV; BoxSet performer type since
     # Roku's UI doesn't render Person specially.

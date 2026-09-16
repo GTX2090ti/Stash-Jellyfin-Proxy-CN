@@ -22,6 +22,25 @@ class Profile:
     # — Swiftfin and SenPlayer can browse + play but not manage, since their
     # UI doesn't render the native Playlist types.
     playlist_native: bool = True
+    # Type for studio items. "BoxSet" is the compat shape (a folder of
+    # scenes); some clients route BoxSet into their Collections view instead
+    # of listing the studio's scenes, so they get the semantically correct
+    # "Studio" BaseItemKind. See _STUDIO_TYPE_PROFILES.
+    studio_type: str = "BoxSet"
+
+
+# Profiles where a BoxSet-typed studio lands in the client's Collections
+# ("集合") view instead of showing the studio's scenes. These get
+# Type=Studio for /Items/{id} and studio list entries; the client then
+# browses via ParentId=studio-N or StudioIds= queries, both supported.
+#   SenPlayer / Yamby: tapping a studio fetched /Users/{u}/Items/studio-N,
+#   saw Type=BoxSet and jumped to the Collections screen (user report
+#   2026-09-16). Explicit `studio_type` in a [player.*] section overrides
+#   the sentinel.
+_STUDIO_TYPE_PROFILES: Dict[str, str] = {
+    "senplayer": "Studio",
+    "yamby": "Studio",
+}
 
 
 # Profiles whose UI doesn't render native Playlist items — exposed in compat
@@ -43,6 +62,7 @@ _HARDCODED_DEFAULT = Profile(
     performer_type="BoxSet",
     poster_format="landscape",
     playlist_native=True,
+    studio_type="BoxSet",
 )
 
 
@@ -71,6 +91,7 @@ def load_profiles(sections: Dict[str, Dict[str, str]]) -> List[Profile]:
         playlist_native=_parse_bool(
             default_cfg.get("playlist_native"), _HARDCODED_DEFAULT.playlist_native
         ),
+        studio_type=default_cfg.get("studio_type", _HARDCODED_DEFAULT.studio_type),
     )
 
     profiles: List[Profile] = []
@@ -84,12 +105,19 @@ def load_profiles(sections: Dict[str, Dict[str, str]]) -> List[Profile]:
             playlist_native = _parse_bool(body.get("playlist_native"), True)
         else:
             playlist_native = name not in _PLAYLISTS_NON_NATIVE_PROFILES
+        # studio_type: explicit config wins; else per-client sentinel
+        # (clients that misroute BoxSet studios); else the default.
+        if "studio_type" in body:
+            studio_type = body["studio_type"]
+        else:
+            studio_type = _STUDIO_TYPE_PROFILES.get(name, default.studio_type)
         profiles.append(Profile(
             name=name,
             user_agent_match=body.get("user_agent_match", ""),
             performer_type=body.get("performer_type", default.performer_type),
             poster_format=body.get("poster_format", default.poster_format),
             playlist_native=playlist_native,
+            studio_type=studio_type,
         ))
     profiles.append(default)
     return profiles

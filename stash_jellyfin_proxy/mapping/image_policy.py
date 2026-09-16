@@ -21,6 +21,14 @@ def performer_item_type(request) -> str:
     return resolve_from_request(request).performer_type
 
 
+def studio_item_type(request) -> str:
+    """Return the Jellyfin Type string for studio items (Studio/BoxSet).
+
+    "Studio" for clients that misroute BoxSet-typed studios into their
+    Collections view (SenPlayer/Yamby); compat "BoxSet" for the rest."""
+    return resolve_from_request(request).studio_type
+
+
 def playlist_collection_type(request) -> str:
     """Return the CollectionType for the Playlists library tile.
 
