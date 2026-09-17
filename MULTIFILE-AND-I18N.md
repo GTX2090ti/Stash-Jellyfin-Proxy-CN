@@ -3,7 +3,7 @@
 > **项目**：Stash-Jellyfin-Proxy 自研分支（让 Infuse / SenPlayer / Swiftfin 等 Jellyfin 客户端直连 Stash）
 > **上游基线**：`ef3d017`（feldorn/Stash-Jellyfin-Proxy，v7.3.10）
 > **自研分支**：`local/self-maintained`
-> **部署环境**：飞牛 NAS `192.168.2.210`，2026-09-13 真机验证通过
+> **部署环境**：飞牛 NAS `<NAS_IP>`，2026-09-13 真机验证通过
 > **本文覆盖**：多文件场景修复、配置界面汉化、部署形态、踩坑记录、变更清单
 
 ---
@@ -81,7 +81,7 @@
 
 ```yaml
 volumes:
-  - /vol1/1000/HS1:/library:ro                                    # ① 媒体库挂进容器（只读）
+  - /vol1/<MEDIA_VOL>:/library:ro                                    # ① 媒体库挂进容器（只读）
 environment:
   - MULTI_FILE_SCENES=true                                        # ② 打开开关
   - LIBRARY_PATH_MAP=/data:/library                               # ③ 路径映射
@@ -106,12 +106,12 @@ Multi-file scenes: UNSET — non-primary files will fall back to the Stash strea
 
 | 环节 | 事实 |
 |---|---|
-| Stash 容器怎么挂 | `/vol1/1000/HS1 → /data`（只读） |
+| Stash 容器怎么挂 | `/vol1/<MEDIA_VOL> → /data`（只读） |
 | 所以 Stash 上报的路径是 | `/data/PT/xxx/yyy.mp4` |
-| SJP 容器怎么挂 | `/vol1/1000/HS1 → /library`（只读） |
+| SJP 容器怎么挂 | `/vol1/<MEDIA_VOL> → /library`（只读） |
 | 所以映射应为 | `/data:/library` |
 
-> ⚠️ 如果按宿主路径想当然写成 `/vol1/1000/HS1/PT:/library`，**永远不会命中** —— 因为 Stash 上报的是 `/data/PT/...`。这是本次部署中真实踩到的坑（见 §6.1 的相关说明）。
+> ⚠️ 如果按宿主路径想当然写成 `/vol1/<MEDIA_VOL>/PT:/library`，**永远不会命中** —— 因为 Stash 上报的是 `/data/PT/...`。这是本次部署中真实踩到的坑（见 §6.1 的相关说明）。
 
 **怎么查真实前缀**（不用猜）：
 
@@ -300,11 +300,11 @@ services:
       - PGID=1000
       - TZ=Asia/Shanghai
     volumes:
-      - /vol2/1000/HSX/docker/stash-jellyfin-proxy:/config
+      - /vol2/<DATA_VOL>/docker/stash-jellyfin-proxy:/config
       # 自研代码覆盖镜像内置包。必须 rw，见 §5.2
-      - /vol2/1000/HSX/docker/stash-jellyfin-proxy/app:/app/stash_jellyfin_proxy
+      - /vol2/<DATA_VOL>/docker/stash-jellyfin-proxy/app:/app/stash_jellyfin_proxy
       # 媒体库（只读），挂载点与 Stash 自身的挂载一致
-      - /vol1/1000/HS1:/library:ro
+      - /vol1/<MEDIA_VOL>:/library:ro
 ```
 
 ---
@@ -322,7 +322,7 @@ services:
 | 约束 | 原因 |
 |---|---|
 | 代码挂载点必须 **rw**，不能 `:ro` | 镜像的 `docker-entrypoint.sh` 每次启动执行 `chown -R ${PUID}:${PGID} /app`，脚本带 `set -e` —— 挂成只读会让 chown 失败并**直接中断启动** |
-| 媒体库挂载点要与 **Stash 的挂载同构** | Stash 把 `/vol1/1000/HS1` 挂成 `/data` 并据此上报路径，本容器挂成 `/library`，映射 `/data:/library` 才是同构 |
+| 媒体库挂载点要与 **Stash 的挂载同构** | Stash 把 `/vol1/<MEDIA_VOL>` 挂成 `/data` 并据此上报路径，本容器挂成 `/library`，映射 `/data:/library` 才是同构 |
 | 部署前必须核对**容器内是否已有手改** | 原部署单独挂了一个手改的 `views.py`；整体覆盖目录会静默回退它 |
 
 ### 5.3 部署流程（可重复执行）
@@ -352,11 +352,11 @@ dev-tools/
 
 ```bash
 # 备份位置（每次部署自动创建）
-/vol2/1000/HSX/docker/stash-jellyfin-proxy/_backup/<时间戳>/
+/vol2/<DATA_VOL>/docker/stash-jellyfin-proxy/_backup/<时间戳>/
 
 # 回滚 = 换回旧代码树 + 重建
 mv .../_backup/<ts>/app.prev .../app
-cd /vol2/1000/HSX/docker/stash-jellyfin-proxy && docker compose up -d
+cd /vol2/<DATA_VOL>/docker/stash-jellyfin-proxy && docker compose up -d
 ```
 
 秒级完成，**不需要重建镜像**。本次部署共留下 7 个时间点备份与 1 个 `docker-compose.yml.bak-*`。

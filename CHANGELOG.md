@@ -2,6 +2,20 @@
 
 > `CN.x` 为本分支自研版本号（倒序在上）；CN.3 起应用内版本号带 `CN.x` 后缀。CN.x 之前为上游（feldorn/Stash-Jellyfin-Proxy）的发布记录。
 
+### v7.3.10-CN.6 —— 收藏配置缺失警告 + 文档脱敏（自研）
+
+1. **`FAVORITE_TAG` 未配置启动警告**（`config/bootstrap.py`）：收藏采用
+   Stash 标签制（收藏 = 给场景/合集打 `FAVORITE_TAG` 指定的标签），但该键
+   不在默认配置里——漏配时播放器收藏夹**永远为空**、点收藏静默不落库
+   （表演者/工作室走原生 `favorite` 布尔，不受影响），且此前无任何提示。
+   现在启动 banner 会给出 WARNING 与修复指引（含「全局键必须写在第一个
+   `[player.*]` 分节之前」这一配置解析器的硬约束）。NAS 真机复现：
+   SenPlayer 收藏夹空 + 代理日志 `Movie+IsFavorite: runtime.FAVORITE_TAG
+   not configured - returning empty`。
+2. **文档脱敏**：`MULTIFILE-AND-I18N.md` / `REFACTOR-PLAN.md` /
+   `SCRAPING-NOTES.md` 中的内网 IP 与真实存储卷路径统一替换为
+   `<NAS_IP>` / `/vol2/<DATA_VOL>` / `/vol1/<MEDIA_VOL>` 占位符。
+
 ### v7.3.10-CN.5 —— 工作室/厂商列表容器化修复（自研）
 
 围绕「厂商列表点进去没有视频 / 有的有有的没有 / 要点两次才进去」的一批修复：

@@ -190,13 +190,13 @@ config/bootstrap.py   │  环境变量 > 配置文件
 | `MULTI_FILE_SCENES` | `false` | 开启后，含多文件的场景会暴露多个版本 |
 | `LIBRARY_PATH_MAP` | `""` | 逗号分隔的 `stash_path:container_path`，如 `/data:/library` |
 
-> ⚠️ **左边是「Stash 上报的路径」，不是宿主路径。** Stash 自己把 `/vol1/1000/HS1` 挂成 `/data`，因此它上报 `/data/PT/...`；本容器把同一棵树挂成 `/library`，映射才是 `/data:/library`。写成宿主的 `/vol1/1000/HS1/PT:/library` 是**不匹配**的 —— 会静默回退且日志无报错。真实前缀从 Stash 的 GraphQL 读一条 `files { path }` 即可确认。
+> ⚠️ **左边是「Stash 上报的路径」，不是宿主路径。** Stash 自己把 `/vol1/<MEDIA_VOL>` 挂成 `/data`，因此它上报 `/data/PT/...`；本容器把同一棵树挂成 `/library`，映射才是 `/data:/library`。写成宿主的 `/vol1/<MEDIA_VOL>/PT:/library` 是**不匹配**的 —— 会静默回退且日志无报错。真实前缀从 Stash 的 GraphQL 读一条 `files { path }` 即可确认。
 
 需要同时给容器挂载只读卷：
 
 ```yaml
 volumes:
-  - /vol1/1000/HS1:/library:ro        # 挂载点与 Stash 自身一致
+  - /vol1/<MEDIA_VOL>:/library:ro        # 挂载点与 Stash 自身一致
 environment:
   - MULTI_FILE_SCENES=true
   - LIBRARY_PATH_MAP=/data:/library   # Stash 容器内路径 : 本容器内路径
@@ -289,9 +289,9 @@ git switch -c local/self-maintained
 
 ```yaml
 volumes:
-  - /vol2/1000/HSX/docker/stash-jellyfin-proxy:/config
-  - /vol2/1000/HSX/docker/stash-jellyfin-proxy/app:/app/stash_jellyfin_proxy   # 自研代码
-  - /vol1/1000/HS1:/library:ro                                                # 媒体库
+  - /vol2/<DATA_VOL>/docker/stash-jellyfin-proxy:/config
+  - /vol2/<DATA_VOL>/docker/stash-jellyfin-proxy/app:/app/stash_jellyfin_proxy   # 自研代码
+  - /vol1/<MEDIA_VOL>:/library:ro                                                # 媒体库
 ```
 
 三个关键约束（都已踩过验证）：
@@ -299,7 +299,7 @@ volumes:
 | 约束 | 原因 |
 |---|---|
 | `/app/stash_jellyfin_proxy` 必须 **rw** | `docker-entrypoint.sh` 每次启动执行 `chown -R ${PUID}:${PGID} /app`，脚本带 `set -e`，只读挂载会让 chown 失败并**直接中断启动** |
-| 媒体库挂载点必须与 Stash 的挂载**完全一致** | Stash 自己把 `/vol1/1000/HS1` 挂成 `/data`，所以它上报的路径是 `/data/PT/...`；本容器也挂成 `/library`，`LIBRARY_PATH_MAP=/data:/library` 才是同构映射。当初按宿主路径 `/vol1/1000/HS1/PT` 去猜是错的 |
+| 媒体库挂载点必须与 Stash 的挂载**完全一致** | Stash 自己把 `/vol1/<MEDIA_VOL>` 挂成 `/data`，所以它上报的路径是 `/data/PT/...`；本容器也挂成 `/library`，`LIBRARY_PATH_MAP=/data:/library` 才是同构映射。当初按宿主路径 `/vol1/<MEDIA_VOL>/PT` 去猜是错的 |
 | 部署前必须核对容器内是否已有手改 | 原部署在 compose 里单独挂了一个手改的 `views.py`（客户端侧媒体库名汉化）。整体覆盖目录会**静默回退**这项改动 —— 已合并进 `endpoints/views.py` 后统一由自研树提供 |
 
 回滚 = 把 `_backup/<ts>/app.prev` 换回 `app/` + `docker compose up -d`，秒级完成，不用重建镜像。

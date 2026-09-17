@@ -2,7 +2,7 @@
 
 **主题：Jellyfin「识别 / 刮削」桥接到 Stash 刮削引擎**
 **周期：2026-09-13 ~ 2026-09-14**
-**状态：已上线（NAS 192.168.2.210），全链路实测通过**
+**状态：已上线（NAS <NAS_IP>），全链路实测通过**
 **版本基线：v7.3.10（本地分支 `local/self-maintained`）**
 
 ---
@@ -320,7 +320,7 @@ SCRAPE_NUMERIC_URL_TEMPLATES = fantiajp=https://fantia.jp/posts/{id}|https://fan
 ## 五、配置参考
 
 配置文件：`/config/stash_jellyfin_proxy.conf`（NAS 上为
-`/vol2/1000/HSX/docker/stash-jellyfin-proxy/stash_jellyfin_proxy.conf`）
+`/vol2/<DATA_VOL>/docker/stash-jellyfin-proxy/stash_jellyfin_proxy.conf`）
 **以下键只在全局作用域设置（第一个 `[section]` 之前），否则不生效。**
 
 | 配置键 | 默认值 | 说明 |
@@ -344,8 +344,8 @@ SCRAPE_NUMERIC_URL_TEMPLATES = fantiajp=https://fantia.jp/posts/{id}|https://fan
 
 | 项目 | 值 |
 |---|---|
-| 主机 / 路径 | `192.168.2.210:/vol2/1000/HSX/docker/stash-jellyfin-proxy` |
-| 目录挂载 | `app/` → `/app/stash_jellyfin_proxy`（**rw**，entrypoint 需 chown）；自身 → `/config`；`/vol1/1000/HS1` → `/library:ro` |
+| 主机 / 路径 | `<NAS_IP>:/vol2/<DATA_VOL>/docker/stash-jellyfin-proxy` |
+| 目录挂载 | `app/` → `/app/stash_jellyfin_proxy`（**rw**，entrypoint 需 chown）；自身 → `/config`；`/vol1/<MEDIA_VOL>` → `/library:ro` |
 | 关键环境 | `LIBRARY_PATH_MAP = /data:/library`（左侧为 **Stash 容器内**路径）；`MULTI_FILE_SCENES = True` |
 | 升级方式 | 仅替换 `app/` 目录树 |
 | 回滚方式 | 换回 `_backup/<ts>/app.prev` + `docker compose up -d` |
@@ -380,7 +380,7 @@ SCRAPE_NUMERIC_URL_TEMPLATES = fantiajp=https://fantia.jp/posts/{id}|https://fan
 2. 全部未命中时仍会等最慢的那个（AdultTime 20s），之后自动进入 600s 降级冷却。
 3. URL-only 刮削器（如 FantiaJp）不会出现在 Identify 的 provider 列表中（其不支持名称搜索），因此客户端 provider 级调用拿不到它——但**聚合搜索（`provider=all`）已能命中**。
 
-4. **`FantiaProducts.yml` 不在任何备份链里**。它直接放在 `<stash config>/scrapers/FantiaProducts.yml`（NAS 上 `/vol2/1000/HSX/docker/stash/config/scrapers/`），既不属于 `sjp` 捆绑包、也不属于任何 Stash 包：
+4. **`FantiaProducts.yml` 不在任何备份链里**。它直接放在 `<stash config>/scrapers/FantiaProducts.yml`（NAS 上 `/vol2/<DATA_VOL>/docker/stash/config/scrapers/`），既不属于 `sjp` 捆绑包、也不属于任何 Stash 包：
    - ✅ 好处：不会被 `installPackages` 的后台任务覆盖（见技能 §17.7 的「隐藏炸弹」）；
    - ⚠️ 风险：`stash-jellyfin-proxy` 的回滚（`_backup/<ts>/app.prev`）**不含它**，需单独备份。源文本已归档在本说明「修复四」一节，可直接据此恢复。
 

@@ -378,6 +378,13 @@ def run_bootstrap(config_file: str, local_config_file: str) -> None:
         print(f"  Tag groups: {', '.join(TAG_GROUPS)}")
     if FAVORITE_TAG:
         print(f"  Favorite tag: {FAVORITE_TAG}")
+    else:
+        print("WARNING: FAVORITE_TAG not set!")
+        print("  Scene/group favorites will always be empty and toggling a favorite")
+        print("  in the player silently does nothing (performers/studios are")
+        print("  unaffected — they use Stash's native favorite flag).")
+        print("  Fix: add FAVORITE_TAG = \"FAVORITE\" to the config file, ABOVE the")
+        print("  first [player.*] section, then restart the container.")
     if LATEST_GROUPS:
         print(f"  Latest groups: {', '.join(LATEST_GROUPS)}")
     banner_suffix = f", tags=[{', '.join(BANNER_TAGS)}]" if BANNER_TAGS else ""
