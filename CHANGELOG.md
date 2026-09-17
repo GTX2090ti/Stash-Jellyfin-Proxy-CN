@@ -2,6 +2,30 @@
 
 > `CN.x` 为本分支自研版本号（倒序在上）；CN.3 起应用内版本号带 `CN.x` 后缀。CN.x 之前为上游（feldorn/Stash-Jellyfin-Proxy）的发布记录。
 
+### v7.3.10-CN.8 —— 配置键大小写归一：海报裁剪等 WebUI 设置重启后回退（自研）
+
+**现象**：WebUI 里改「海报裁剪锚点」即时生效，但容器一重启就回退成默认
+`center`；配置文件里同时出现 `poster_crop_anchor = center` 和
+`POSTER_CROP_ANCHOR = "right"` 两行。
+
+**根因**：配置键大小写敏感且两端不一致——WebUI 设置页（`ui/api.py`
+P5B 表）用 **UPPER_CASE** 写入配置文件，而 bootstrap 读取部分键时用
+**lower_case**（如 `poster_crop_anchor`），`load_config` 又不做大小写
+归一。于是 WebUI 保存的值写进去了、重启后永远读不回来；且
+`save_config_value` 按大小写精确匹配删旧行，残留的小写旧行与新写入的
+大写行并存（受「全局键必须在第一个 `[player.*]` 之前」约束，位置还
+可能反过来）。
+
+**修复**（`config/loader.py` / `config/bootstrap.py` / `config/helpers.py`）：
+
+1. 新增 `CaseInsensitiveDict`：所有查找按 casefold 归一，后写的行覆盖
+   先写的行。bootstrap 在本地覆盖合并完成后将 cfg 包一层——全部
+   ~100 个 `cfg.get(...)` 读取点一次性修复，不限于海报锚点。
+2. `_line_matches_key` 改为大小写不敏感匹配：保存任一大小写变体时
+   会清掉文件里所有变体行再插入一行，存量重复键自愈。
+3. 迁移逻辑不受影响（`CONFIG_VERSION` 读取本就大写且 v2 配置不走
+   v1→v2 重写路径）。
+
 ### v7.3.10-CN.7 —— HosPlayer 收藏演员修复（自研）
 
 1. **根级 Person 查询支持**（`endpoints/items.py`）：HosPlayer 的

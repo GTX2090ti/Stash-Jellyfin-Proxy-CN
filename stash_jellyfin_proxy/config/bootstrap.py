@@ -27,7 +27,7 @@ from stash_jellyfin_proxy.config.helpers import (
     save_config_value,
     save_server_id_to_config,
 )
-from stash_jellyfin_proxy.config.loader import load_config
+from stash_jellyfin_proxy.config.loader import CaseInsensitiveDict, load_config
 from stash_jellyfin_proxy.config.migration import run_config_migration, CURRENT_CONFIG_VERSION
 
 
@@ -143,6 +143,18 @@ def run_bootstrap(config_file: str, local_config_file: str) -> None:
             for section_name, section_body in local_sections.items():
                 cfg_sections.setdefault(section_name, {}).update(section_body)
             print(f"Loaded local override from {local_config_file}")
+
+    # ---- Collapse to case-insensitive keys ----
+    # The WebUI settings handler writes UPPER_CASE conf keys
+    # (POSTER_CROP_ANCHOR) while hand edits and older releases wrote
+    # lower_case (poster_crop_anchor) — and bootstrap's own read sites
+    # are mixed too. With a plain dict, a same-key-different-case pair
+    # in the file shadows one of the two values: the user's WebUI change
+    # was saved but never read back, so settings reverted on restart.
+    # CaseInsensitiveDict folds every lookup; later file lines win, so
+    # the newest edit always applies.
+    cfg = CaseInsensitiveDict(cfg)
+    cfg_defined_keys = set(cfg.keys())
 
     # ---- Apply config values ----
     if cfg:

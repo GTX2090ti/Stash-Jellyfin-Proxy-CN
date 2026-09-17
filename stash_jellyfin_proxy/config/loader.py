@@ -15,6 +15,55 @@ import os
 import sys
 
 
+class CaseInsensitiveDict(dict):
+    """Dict with case-insensitive string keys.
+
+    Config keys legitimately appear in either case: the WebUI settings
+    handler writes UPPER_CASE (POSTER_CROP_ANCHOR), hand edits and older
+    releases wrote lower_case (poster_crop_anchor) — and bootstrap read
+    sites are mixed too. With a plain dict a same-key-different-case pair
+    silently shadows one of the two values; this view folds all lookups
+    so the last-written line always wins, matching user expectation that
+    a newer edit overrides an older one.
+
+    Iteration (keys/items) yields casefolded keys.
+    """
+
+    def __init__(self, data=None, **kw):
+        super().__init__()
+        if data:
+            for k, v in data.items():
+                self[k] = v
+        for k, v in kw.items():
+            self[k] = v
+
+    def __setitem__(self, key, value):
+        super().__setitem__(str(key).casefold(), value)
+
+    def __getitem__(self, key):
+        return super().__getitem__(str(key).casefold())
+
+    def __contains__(self, key):
+        return super().__contains__(str(key).casefold())
+
+    def get(self, key, default=None):
+        return super().get(str(key).casefold(), default)
+
+    def pop(self, key, *args):
+        return super().pop(str(key).casefold(), *args)
+
+    def setdefault(self, key, *args):
+        return super().setdefault(str(key).casefold(), *args)
+
+    def update(self, other=(), **kw):
+        if hasattr(other, "items"):
+            other = other.items()
+        for k, v in other:
+            self[k] = v
+        for k, v in kw.items():
+            self[k] = v
+
+
 def load_config(filepath):
     """Load configuration from a shell-style config file with optional
     INI-style section blocks.

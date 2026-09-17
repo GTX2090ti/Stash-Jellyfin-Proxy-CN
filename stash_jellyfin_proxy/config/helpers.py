@@ -93,12 +93,20 @@ def find_global_insert_idx(lines):
 
 
 def _line_matches_key(line: str, key: str) -> bool:
-    """True if `line` is `KEY = ...` or `# KEY = ...`, exact key match.
-    Used so SERVER_ID doesn't collide with a hypothetical SERVER_ID_FOO."""
+    """True if `line` is `KEY = ...` or `# KEY = ...` for `key`, matched
+    case-insensitively but anchored to the full key so SERVER_ID doesn't
+    collide with a hypothetical SERVER_ID_FOO.
+
+    Case-insensitivity matters because the WebUI writes UPPER_CASE keys
+    while hand edits / older releases wrote lower_case — saving one case
+    must replace the other or a stale duplicate line survives and, on
+    the next load, can shadow the freshly saved value.
+    """
     s = line.strip()
     if s.startswith('#'):
         s = s[1:].lstrip()
-    if not s.startswith(key):
+    folded_key = key.casefold()
+    if not s.casefold().startswith(folded_key):
         return False
     rest = s[len(key):]
     return rest.lstrip().startswith('=')
