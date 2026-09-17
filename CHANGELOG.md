@@ -2,6 +2,24 @@
 
 > `CN.x` 为本分支自研版本号（倒序在上）；CN.3 起应用内版本号带 `CN.x` 后缀。CN.x 之前为上游（feldorn/Stash-Jellyfin-Proxy）的发布记录。
 
+### v7.3.10-CN.7 —— HosPlayer 收藏演员修复（自研）
+
+1. **根级 Person 查询支持**（`endpoints/items.py`）：HosPlayer 的
+   「收藏演员」页发的是无 ParentId 的
+   `/Items?IncludeItemTypes=Person&Filters=IsFavorite&Recursive=true`，
+   此前落入全局查询分支被 `Global query skipped` 跳过、恒返回空列表。
+   现新增 Person 分支：`Filters=IsFavorite` 映射到 Stash 原生
+   `performer_filter: {filter_favorites: true}`，普通 Person 查询列出全部
+   表演者；分页/排序复用 root-performers 的处理
+   （`get_stash_sort_params(context="folders")`）。NAS 真机复现：
+   HosPlayer 收藏演员页空 + 代理日志 `Global query skipped - requested
+   types ['Person'] don't include Movie/Video`。
+2. **条目类型强制 `Type=Person`**：客户端按请求的 `IncludeItemTypes` 在
+   客户端侧二次过滤响应条目——per-profile 的 `performer_item_type()`
+   （非 Swiftfin 客户端返回 BoxSet）会被 HosPlayer 丢弃，返回 11 条仍
+   显示为空。现固定返回 `Type=Person` + `PersonType=Actor`，与请求类型
+   一致。同一查询回归验证：收藏影片（Movie+IsFavorite）不受影响。
+
 ### v7.3.10-CN.6 —— 收藏配置缺失警告 + 文档脱敏（自研）
 
 1. **`FAVORITE_TAG` 未配置启动警告**（`config/bootstrap.py`）：收藏采用

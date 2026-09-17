@@ -2170,6 +2170,67 @@ async def endpoint_items(request):
         movie_only = bool(include_type_list) and "movie" in include_types_lower and "video" not in include_types_lower
         video_requested = "video" in include_types_lower or not include_type_list  # no type filter = return scenes
 
+        # Root-level Person query — HosPlayer's "favorite actors" rail (and
+        # similar client People views) fires
+        # /Items?IncludeItemTypes=Person&Filters=IsFavorite&Recursive=true
+        # with no ParentId. This previously fell into "Global query skipped"
+        # and returned an empty list (observed live 2026-09-17 17:35). Map
+        # IsFavorite onto Stash's native performer favorite flag
+        # (performer_filter.filter_favorites); a plain Person query lists
+        # all performers with the same pagination and sort handling as the
+        # root-performers folder. Force Type=Person: the client asked for
+        # IncludeItemTypes=Person and drops non-Person items when rendering
+        # the rail — per-profile performer_item_type() (BoxSet for
+        # non-Swiftfin clients) would get filtered out client-side.
+        if "person" in include_types_lower:
+            folder_sort, folder_dir = get_stash_sort_params(request, context="folders")
+            if filter_favorites:
+                count_q = """query { findPerformers(performer_filter: {filter_favorites: true}) { count } }"""
+            else:
+                count_q = """query { findPerformers { count } }"""
+            count_res = await stash_query(count_q)
+            total_count = count_res.get("data", {}).get("findPerformers", {}).get("count", 0)
+
+            fav_clause = "performer_filter: {filter_favorites: true}, " if filter_favorites else ""
+            page = (start_index // limit) + 1
+            q = f"""query FindPerformers($page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
+                findPerformers(
+                    {fav_clause}filter: {{page: $page, per_page: $per_page, sort: $sort, direction: $direction}}
+                ) {{
+                    performers {{ id name image_path scene_count favorite }}
+                }}
+            }}"""
+            res = await stash_query(q, {"page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir})
+            performers = res.get("data", {}).get("findPerformers", {}).get("performers", [])
+            logger.debug(f"Global Person query (IsFavorite={filter_favorites}): {len(performers)} performers (page {page}, total {total_count})")
+
+            for p in performers:
+                performer_item = {
+                    "Name": p["name"],
+                    "SortName": sort_name_for(p["name"]),
+                    "Id": f"performer-{p['id']}",
+                    "ServerId": runtime.SERVER_ID,
+                    "Type": "Person",
+                    "PersonType": "Actor",
+                    "IsFolder": True,
+                    "ChildCount": p.get("scene_count", 0),
+                    "RecursiveItemCount": p.get("scene_count", 0),
+                    "PrimaryImageAspectRatio": 0.6667,
+                    "BackdropImageTags": [],
+                    "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": bool(p.get("favorite")), "Played": False, "Key": f"performer-{p['id']}"}
+                }
+                if p.get("image_path"):
+                    performer_item["ImageTags"] = {"Primary": "img"}
+                    performer_item["ImageBlurHashes"] = {"Primary": {"img": "000000"}}
+                else:
+                    performer_item["ImageTags"] = {}
+                items.append(performer_item)
+            return JSONResponse({
+                "Items": items,
+                "TotalRecordCount": total_count,
+                "StartIndex": start_index,
+            })
+
         if not has_movie_type:
             logger.debug(f"Global query skipped - requested types {include_type_list} don't include Movie/Video")
         elif movie_only:
