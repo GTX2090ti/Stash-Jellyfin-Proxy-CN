@@ -423,7 +423,7 @@ async def endpoint_studios(request):
                 studio_filter: {scene_count: {value: 0, modifier: GREATER_THAN}},
                 filter: {page: $page, per_page: $per_page, sort: $sort, direction: $direction}
             ) {
-                studios { id name image_path scene_count }
+                studios { id name image_path scene_count favorite }
             }
         }"""
         res = await stash_query(q, {"page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir})
@@ -433,6 +433,9 @@ async def endpoint_studios(request):
              "Type": "Studio",
              "ImageTags": {"Primary": "img"},
              "ImageBlurHashes": {"Primary": {"img": "000000"}},
+             "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0,
+                          "IsFavorite": bool(s.get("favorite")), "Played": False,
+                          "Key": f"studio-{s['id']}"},
              "BackdropImageTags": []}
             for s in studios
         ]

@@ -1,5 +1,6 @@
 """Home-tab and library-browse endpoints — Views, VirtualFolders,
 Next Up, Latest, Resume, and the Sessions scrobble receiver."""
+import asyncio
 import hashlib
 import logging
 import time
@@ -368,19 +369,37 @@ async def _compute_nextup(limit: int) -> list:
 
     candidates: list = []  # (last_played_dt_str, next_scene_dict, studio_name)
 
-    for studio in studios:
+    # Fetch phase: one query per SERIES studio. These are independent, so
+    # run them concurrently (bounded) instead of serially — with N studios
+    # the old serial loop cost N round-trips before the first candidate
+    # was computed. per_page:-1 makes each query potentially heavy, hence
+    # the semaphore cap.
+    _SCENES_Q = """query SeriesScenes($sid: [ID!]) {
+        findScenes(
+            scene_filter: {{studios: {{value: $sid, modifier: INCLUDES}}}},
+            filter: {{per_page: -1}}
+        ) {{ scenes {{ {fields} play_count last_played_at }} }}
+    }}"""
+
+    async def _fetch_studio_scenes(studio):
         studio_id = studio.get("id")
         if not studio_id:
-            continue
-        # Pull every scene in this studio with relevant play state.
-        scenes_q = f"""query SeriesScenes($sid: [ID!]) {{
-            findScenes(
-                scene_filter: {{studios: {{value: $sid, modifier: INCLUDES}}}},
-                filter: {{per_page: -1}}
-            ) {{ scenes {{ {_SCENE_FIELDS} play_count last_played_at }} }}
-        }}"""
-        sc_res = await stash_query(scenes_q, {"sid": [studio_id]})
+            return studio, []
+        sc_res = await stash_query(
+            _SCENES_Q.format(fields=_SCENE_FIELDS), {"sid": [studio_id]}
+        )
         scenes = ((sc_res or {}).get("data") or {}).get("findScenes", {}).get("scenes", []) or []
+        return studio, scenes
+
+    _sem = asyncio.Semaphore(8)
+
+    async def _bounded(studio):
+        async with _sem:
+            return await _fetch_studio_scenes(studio)
+
+    fetched = await asyncio.gather(*(_bounded(s) for s in studios))
+
+    for studio, scenes in fetched:
         if not scenes:
             continue
 
@@ -663,7 +682,7 @@ async def endpoint_latest_items(request):
                 studio_filter: {scene_count: {value: 0, modifier: GREATER_THAN}},
                 filter: {page: $page, per_page: $per_page, sort: "created_at", direction: DESC}
             ) {
-                studios { id name image_path scene_count }
+                studios { id name image_path scene_count favorite }
             }
         }"""
         res = await stash_query(q, {"page": 1, "per_page": limit})
@@ -681,7 +700,7 @@ async def endpoint_latest_items(request):
                 "BackdropImageTags": [],
                 "UserData": {
                     "PlaybackPositionTicks": 0, "PlayCount": 0,
-                    "IsFavorite": False, "Played": False,
+                    "IsFavorite": bool(s.get("favorite")), "Played": False,
                     "Key": f"studio-{s['id']}",
                 },
             }

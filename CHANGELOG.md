@@ -2,6 +2,55 @@
 
 > `CN.x` 为本分支自研版本号（倒序在上）；CN.3 起应用内版本号带 `CN.x` 后缀。CN.x 之前为上游（feldorn/Stash-Jellyfin-Proxy）的发布记录。
 
+### v7.3.10-CN.10 —— 厂商收藏读侧补齐 + 性能优化（自研）
+
+**一、厂商（Studio）收藏：写入正常但读不出来**
+
+**现象**：播放器里给厂商点收藏会返回成功，但在厂商列表里心形始终不亮，
+收藏页也从不出现厂商。Stash 里其实已经存了 4 个被收藏的厂商。
+
+**根因**（写侧一直是好的，缺口全在读侧）：
+1. 厂商列表的 `UserData.IsFavorite` 被**硬编码为 `False`**（三处：
+   `items.py` 的 saved-filter 分支与 root-studios 列表、`views.py` 的
+   root-studios 视图），且对应 GraphQL 查询根本没取 `favorite` 字段。
+2. `IncludeItemTypes=Studio&Filters=IsFavorite` 没有路由，落到
+   "Global query skipped"（只认 Movie/Video）而返回空。
+3. 客户端收藏页按 item 类型逐条探测。实测 SenPlayer 只请求
+   Movie/Series/Season/Episode/Video/BoxSet/Person，**从不请求 Studio**；
+   而 BoxSet-only 请求同样被直接跳过 —— 所以厂商没有机会出现在收藏页。
+
+**修复**：
+- 三处列表回填 `IsFavorite`，查询补 `favorite` 字段（`search.py` 的
+  `/Studios` 接口顺手补齐）。
+- 新增 Studio + `Filters=IsFavorite` 路由，走 Stash 的
+  `studio_filter: {favorite: true}`。
+  ⚠️ 注意：厂商用 `favorite`（Boolean 标量），**不是** 表演者的
+  `filter_favorites`；后者传给 `studio_filter` 会 422 校验失败。
+- 新增 BoxSet + `Filters=IsFavorite` 轨，返回已收藏厂商（Type 记为
+  `BoxSet`，否则客户端会按 include-type 过滤丢掉），使 SenPlayer
+  收藏页能看到厂商。厂商收藏走 Stash 原生 `favorite` 布尔，与场景的
+  `FAVORITE_TAG` 标签制互不影响。
+
+**二、性能优化**
+
+1. **海报图片客户端缓存（收益最大）**：图片响应原先带
+   `Cache-Control: no-store`，明令禁止客户端缓存——播放器每次刷新
+   网格都要经 WiFi 重新下载全部海报。改为 **ETag + `Cache-Control:
+   no-cache`**（可存储、每次协商复验）：图片未变时客户端收到 304 空响应，
+   不再重传图片本体；图片变更后 ETag 变化，自然拿到新图，无过期风险。
+2. **列表 count+page 查询并行化**：列表接口原先先 `count` 再取分页数据，
+   两次串行往返。`stash/client.py` 新增 `stash_query_pair()`（`asyncio.
+   gather`），items.py 中 20 处满足安全条件的站点已并行化，其余 12 处
+   （中间含条件分支/额外查询）保守保留串行。
+3. **NextUp（继续观看）N+1 串行查询修复**：`views.py` `_compute_nextup`
+   原先逐个 SERIES 剧集 studio 串行查全量场景（每 studio 一次往返），
+   改为 `asyncio.gather` 并发拉取（`Semaphore(8)` 限流，防止 per_page:-1
+   的重查询打满 Stash），N 个剧集的延迟从 N 次往返降为约 1 轮。
+
+**验证**（NAS 真机）：见对应工作日志——图片 304 协商、count+page 单轮
+完成、NextUp 并发拉取、厂商收藏与场景/表演者收藏回归全部 PASS。
+
+
 ### v7.3.10-CN.8 —— 配置键大小写归一：海报裁剪等 WebUI 设置重启后回退（自研）
 
 **现象**：WebUI 里改「海报裁剪锚点」即时生效，但容器一重启就回退成默认

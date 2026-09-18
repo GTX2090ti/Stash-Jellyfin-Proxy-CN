@@ -10,6 +10,7 @@ happily return a 1.4 KB SVG-placeholder for items with no real image.
 MENU_ICONS here is a static reference for the menu-icon id set only; the
 actual PNGs are rendered by `stash_jellyfin_proxy.util.images.generate_menu_icon`.
 """
+import hashlib
 import logging
 import time
 
@@ -177,11 +178,26 @@ async def _tag_card_artwork(tag_name: str) -> "tuple[bytes, str] | None":
 
 
 _ICON_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate", "Pragma": "no-cache"}
-_IMAGE_CACHE_HEADERS = {
-    "Cache-Control": "no-cache, no-store, must-revalidate",
-    "Pragma": "no-cache",
-    "Expires": "0",
-}
+
+
+def _image_response(request, data: bytes, content_type: str):
+    """Serve image bytes with ETag revalidation.
+
+    The old headers were `no-store`, which forbids clients from caching at
+    all — every grid refresh re-downloaded every poster over the wire.
+    `no-cache` + ETag keeps freshness (the client revalidates each time) while
+    an unchanged image costs one tiny 304 instead of a full re-transfer.
+    """
+    etag = '"' + hashlib.sha1(data).hexdigest()[:24] + '"'
+    headers = {"Cache-Control": "no-cache", "ETag": etag}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return Response(content=data, media_type=content_type, headers=headers)
+
+
+# Backwards-compat alias: some external call sites / tests may still import
+# this name; it is no longer used for scene/item images (see _image_response).
+_IMAGE_CACHE_HEADERS = {"Cache-Control": "no-cache"}
 
 
 async def endpoint_image(request):
@@ -209,7 +225,7 @@ async def endpoint_image(request):
         label = menu_icon_label(item_id)
         if art is not None:
             data, ct = compose_library_card(art[0], label)
-            return Response(content=data, media_type=ct, headers=_IMAGE_CACHE_HEADERS)
+            return _image_response(request, data, ct)
         img_data, content_type = generate_menu_icon(item_id)
         logger.debug(f"Serving fallback text icon for {item_id} (no scene artwork)")
         return Response(content=img_data, media_type=content_type, headers=_ICON_CACHE_HEADERS)
@@ -230,7 +246,7 @@ async def endpoint_image(request):
             art = await _tag_card_artwork(tag_name)
             if art is not None:
                 data, ct = compose_library_card(art[0], display_name)
-                return Response(content=data, media_type=ct, headers=_IMAGE_CACHE_HEADERS)
+                return _image_response(request, data, ct)
         img_data, content_type = generate_text_icon(display_name)
         logger.debug(f"Serving text icon for tag folder: {display_name}")
         return Response(content=img_data, media_type=content_type, headers=_ICON_CACHE_HEADERS)
@@ -305,7 +321,7 @@ async def endpoint_image(request):
             shot = await _fetch_scene_screenshot(scene_id)
             if shot is not None:
                 data, ct = compose_library_card(shot[0], playlist_name)
-                return Response(content=data, media_type=ct, headers=_IMAGE_CACHE_HEADERS)
+                return _image_response(request, data, ct)
         img_data, content_type = generate_filter_icon(playlist_name)
         return Response(content=img_data, media_type=content_type, headers=_ICON_CACHE_HEADERS)
 
@@ -421,7 +437,7 @@ async def endpoint_image(request):
     if cache_key in runtime.IMAGE_CACHE:
         cached_data, cached_type = runtime.IMAGE_CACHE[cache_key]
         logger.debug(f"Cache hit for {item_id}")
-        return Response(content=cached_data, media_type=cached_type, headers=_IMAGE_CACHE_HEADERS)
+        return _image_response(request, cached_data, cached_type)
 
     image_headers = {"ApiKey": runtime.STASH_API_KEY} if runtime.STASH_API_KEY else {}
 
@@ -532,23 +548,23 @@ async def endpoint_image(request):
                         else:
                             logger.debug(f"No fallback for {item_id}, generating text icon")
                             img_data, ct = await _name_text_icon(item_id, numeric_id)
-                            return Response(content=img_data, media_type=ct, headers=_IMAGE_CACHE_HEADERS)
+                            return _image_response(request, img_data, ct)
                 else:
                     logger.debug(f"No valid image for {item_id}, generating text icon")
                     img_data, ct = await _name_text_icon(item_id, numeric_id)
-                    return Response(content=img_data, media_type=ct, headers=_IMAGE_CACHE_HEADERS)
+                    return _image_response(request, img_data, ct)
 
         if not data or len(data) < 100:
             if item_id.startswith("group-"):
                 logger.debug(f"Empty/small response for group, using placeholder: {item_id}")
                 img_data, ct = generate_placeholder_icon("group")
-                return Response(content=img_data, media_type=ct, headers=_IMAGE_CACHE_HEADERS)
+                return _image_response(request, img_data, ct)
 
         if content_type and not content_type.startswith("image/"):
             if item_id.startswith("group-"):
                 logger.debug(f"Non-image response for group ({content_type}), using placeholder: {item_id}")
                 img_data, ct = generate_placeholder_icon("group")
-                return Response(content=img_data, media_type=ct, headers=_IMAGE_CACHE_HEADERS)
+                return _image_response(request, img_data, ct)
 
         # Stash returns a ~1.4KB SVG placeholder for groups with no art. If
         # we see that, try GraphQL front_image_path as a second path before
@@ -568,7 +584,7 @@ async def endpoint_image(request):
                 # the local placeholder instead of refetching another SVG.
                 if front_image_path and "default=true" in front_image_path:
                     img_data, ct = generate_placeholder_icon("group")
-                    return Response(content=img_data, media_type=ct, headers=_IMAGE_CACHE_HEADERS)
+                    return _image_response(request, img_data, ct)
                 if front_image_path:
                     gql_img_url = (
                         front_image_path
@@ -580,15 +596,15 @@ async def endpoint_image(request):
                     if not (data and len(data) > 1000 and content_type != "image/svg+xml"):
                         logger.warning("GraphQL fallback still returned placeholder/SVG")
                         img_data, ct = generate_placeholder_icon("group")
-                        return Response(content=img_data, media_type=ct, headers=_IMAGE_CACHE_HEADERS)
+                        return _image_response(request, img_data, ct)
                 else:
                     logger.warning(f"No front_image_path in GraphQL response for {item_id}")
                     img_data, ct = generate_placeholder_icon("group")
-                    return Response(content=img_data, media_type=ct, headers=_IMAGE_CACHE_HEADERS)
+                    return _image_response(request, img_data, ct)
             except Exception as e:
                 logger.error(f"GraphQL fallback failed for {item_id}: {e}")
                 img_data, ct = generate_placeholder_icon("group")
-                return Response(content=img_data, media_type=ct, headers=_IMAGE_CACHE_HEADERS)
+                return _image_response(request, img_data, ct)
 
         if needs_portrait_resize and runtime.ENABLE_IMAGE_RESIZE and PILLOW_AVAILABLE:
             # Scenes (and scene-screenshot fallbacks for studios) get cropped
@@ -621,15 +637,15 @@ async def endpoint_image(request):
             runtime.IMAGE_CACHE[cache_key] = (data, content_type)
 
         logger.debug(f"Image response: {len(data)} bytes, type={content_type}")
-        return Response(content=data, media_type=content_type, headers=_IMAGE_CACHE_HEADERS)
+        return _image_response(request, data, content_type)
 
     except Exception as e:
         logger.error(f"Image proxy error for {item_id}: {e}")
         if item_id.startswith("group-"):
             img_data, ct = generate_placeholder_icon("group")
-            return Response(content=img_data, media_type=ct, headers=_IMAGE_CACHE_HEADERS)
+            return _image_response(request, img_data, ct)
         if item_id.startswith(("performer-", "person-", "studio-", "scene-", "series-", "season-")):
             img_data, ct = await _name_text_icon(item_id, numeric_id)
-            return Response(content=img_data, media_type=ct, headers=_IMAGE_CACHE_HEADERS)
+            return _image_response(request, img_data, ct)
         from stash_jellyfin_proxy.util.images import placeholder_png
-        return Response(content=placeholder_png(), media_type='image/png', headers=_IMAGE_CACHE_HEADERS)
+        return _image_response(request, placeholder_png(), 'image/png')

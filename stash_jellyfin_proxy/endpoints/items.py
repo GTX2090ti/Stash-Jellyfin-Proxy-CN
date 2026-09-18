@@ -22,7 +22,7 @@ from starlette.responses import JSONResponse
 
 from stash_jellyfin_proxy import runtime
 from stash_jellyfin_proxy.mapping.scene import format_jellyfin_item, is_group_favorite
-from stash_jellyfin_proxy.stash.client import stash_query
+from stash_jellyfin_proxy.stash.client import stash_query, stash_query_pair
 from stash_jellyfin_proxy.stash.tags import get_or_create_tag
 from stash_jellyfin_proxy.stash.query_helpers import (
     get_stash_sort_params,
@@ -856,11 +856,7 @@ async def endpoint_items(request):
             count_q = """query CountScenes($pid: [ID!]) {
                 findScenes(scene_filter: {performers: {value: $pid, modifier: INCLUDES}}) { count }
             }"""
-            count_res = await stash_query(count_q, {"pid": [performer_id]})
-            total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
-
             page = (start_index // limit) + 1
-
             q = f"""query FindScenes($pid: [ID!], $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
                 findScenes(
                     scene_filter: {{performers: {{value: $pid, modifier: INCLUDES}}}},
@@ -869,7 +865,14 @@ async def endpoint_items(request):
                     scenes {{ {scene_fields} }}
                 }}
             }}"""
-            res = await stash_query(q, {"pid": [performer_id], "page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction})
+            count_res, res = await stash_query_pair(
+                count_q,
+                {"pid": [performer_id]},
+                q,
+                {"pid": [performer_id], "page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction},
+            )
+            total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
+
             scenes = res.get("data", {}).get("findScenes", {}).get("scenes", [])
             logger.debug(f"PersonIds filter: returned {len(scenes)} scenes (page {page}, total {total_count})")
 
@@ -945,9 +948,6 @@ async def endpoint_items(request):
             }}"""
             count_vars = {"q": clean_search}
             count_vars.update(filter_vars)
-            count_res = await stash_query(count_q, count_vars)
-            total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
-
             page = (start_index // limit) + 1
             q = f"""query FindScenes($q: String!, $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!{var_defs}) {{
                 findScenes(filter: {{q: $q, page: $page, per_page: $per_page, sort: $sort, direction: $direction}}{scene_filter_arg}) {{
@@ -956,7 +956,14 @@ async def endpoint_items(request):
             }}"""
             qvars = {"q": clean_search, "page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction}
             qvars.update(filter_vars)
-            res = await stash_query(q, qvars)
+            count_res, res = await stash_query_pair(
+                count_q,
+                count_vars,
+                q,
+                qvars,
+            )
+            total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
+
             scenes = res.get("data", {}).get("findScenes", {}).get("scenes", [])
             logger.debug(f"Search '{clean_search}' + filters={bool(filter_body)} returned {len(scenes)} scenes (page {page}, total {total_count})")
             for s in scenes:
@@ -1035,11 +1042,6 @@ async def endpoint_items(request):
                         findScenes(scene_filter: $scene_filter) { count }
                     }"""
                     logger.debug(f"Running count query with scene_filter: {graphql_filter}")
-                    count_res = await stash_query(count_q, {"scene_filter": graphql_filter})
-                    logger.debug(f"Count query response: {count_res}")
-                    total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
-
-                    # Get paginated results
                     q = f"""query FindScenes($scene_filter: SceneFilterType, $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
                         findScenes(
                             scene_filter: $scene_filter,
@@ -1048,13 +1050,22 @@ async def endpoint_items(request):
                             scenes {{ {scene_fields} }}
                         }}
                     }}"""
-                    res = await stash_query(q, {
+                    count_res, res = await stash_query_pair(
+                        count_q,
+                        {"scene_filter": graphql_filter},
+                        q,
+                        {
                         "scene_filter": graphql_filter,
                         "page": page,
                         "per_page": limit,
                         "sort": sort_field,
                         "direction": sort_direction
-                    })
+                    },
+                    )
+                    logger.debug(f"Count query response: {count_res}")
+                    total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
+                    # Get paginated results
+
                     scenes = res.get("data", {}).get("findScenes", {}).get("scenes", [])
                     logger.debug(f"Saved filter returned {len(scenes)} scenes (page {page}, total {total_count})")
                     for s in scenes:
@@ -1065,10 +1076,6 @@ async def endpoint_items(request):
                     count_q = """query CountPerformers($performer_filter: PerformerFilterType) {
                         findPerformers(performer_filter: $performer_filter) { count }
                     }"""
-                    count_res = await stash_query(count_q, {"performer_filter": graphql_filter})
-                    total_count = count_res.get("data", {}).get("findPerformers", {}).get("count", 0)
-
-                    # Get paginated performers
                     q = """query FindPerformers($performer_filter: PerformerFilterType, $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {
                         findPerformers(
                             performer_filter: $performer_filter,
@@ -1077,7 +1084,15 @@ async def endpoint_items(request):
                             performers { id name image_path scene_count favorite }
                         }
                     }"""
-                    res = await stash_query(q, {"performer_filter": graphql_filter, "page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir})
+                    count_res, res = await stash_query_pair(
+                        count_q,
+                        {"performer_filter": graphql_filter},
+                        q,
+                        {"performer_filter": graphql_filter, "page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir},
+                    )
+                    total_count = count_res.get("data", {}).get("findPerformers", {}).get("count", 0)
+                    # Get paginated performers
+
                     performers = res.get("data", {}).get("findPerformers", {}).get("performers", [])
                     logger.debug(f"Saved filter returned {len(performers)} performers (page {page}, total {total_count})")
                     for p in performers:
@@ -1104,19 +1119,23 @@ async def endpoint_items(request):
                     count_q = """query CountStudios($studio_filter: StudioFilterType) {
                         findStudios(studio_filter: $studio_filter) { count }
                     }"""
-                    count_res = await stash_query(count_q, {"studio_filter": graphql_filter})
-                    total_count = count_res.get("data", {}).get("findStudios", {}).get("count", 0)
-
-                    # Get paginated studios
                     q = """query FindStudios($studio_filter: StudioFilterType, $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {
                         findStudios(
                             studio_filter: $studio_filter,
                             filter: {page: $page, per_page: $per_page, sort: $sort, direction: $direction}
                         ) {
-                            studios { id name image_path scene_count }
+                            studios { id name image_path scene_count favorite }
                         }
                     }"""
-                    res = await stash_query(q, {"studio_filter": graphql_filter, "page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir})
+                    count_res, res = await stash_query_pair(
+                        count_q,
+                        {"studio_filter": graphql_filter},
+                        q,
+                        {"studio_filter": graphql_filter, "page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir},
+                    )
+                    total_count = count_res.get("data", {}).get("findStudios", {}).get("count", 0)
+                    # Get paginated studios
+
                     studios = res.get("data", {}).get("findStudios", {}).get("studios", [])
                     logger.debug(f"Saved filter returned {len(studios)} studios (page {page}, total {total_count})")
                     from stash_jellyfin_proxy.mapping.image_policy import studio_item_type as _sit
@@ -1131,7 +1150,7 @@ async def endpoint_items(request):
                             "ChildCount": s.get("scene_count", 0),
                             "RecursiveItemCount": s.get("scene_count", 0),
                             "ParentId": parent_id,
-                            "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": False, "Played": False, "Key": f"studio-{s['id']}"},
+                            "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": bool(s.get("favorite")), "Played": False, "Key": f"studio-{s['id']}"},
                             "ImageTags": {"Primary": "img"},
                             "ImageBlurHashes": {"Primary": {"img": "000000"}},
                             "PrimaryImageAspectRatio": 0.6667,
@@ -1146,10 +1165,6 @@ async def endpoint_items(request):
                     count_q = """query CountGroups($group_filter: GroupFilterType) {
                         findGroups(group_filter: $group_filter) { count }
                     }"""
-                    count_res = await stash_query(count_q, {"group_filter": graphql_filter})
-                    total_count = count_res.get("data", {}).get("findGroups", {}).get("count", 0)
-
-                    # Get paginated groups
                     q = """query FindGroups($group_filter: GroupFilterType, $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {
                         findGroups(
                             group_filter: $group_filter,
@@ -1158,7 +1173,15 @@ async def endpoint_items(request):
                             groups { id name scene_count }
                         }
                     }"""
-                    res = await stash_query(q, {"group_filter": graphql_filter, "page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir})
+                    count_res, res = await stash_query_pair(
+                        count_q,
+                        {"group_filter": graphql_filter},
+                        q,
+                        {"group_filter": graphql_filter, "page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir},
+                    )
+                    total_count = count_res.get("data", {}).get("findGroups", {}).get("count", 0)
+                    # Get paginated groups
+
                     groups = res.get("data", {}).get("findGroups", {}).get("groups", [])
                     logger.debug(f"Saved filter returned {len(groups)} groups (page {page}, total {total_count})")
                     for g in groups:
@@ -1256,9 +1279,6 @@ async def endpoint_items(request):
             count_q = """query CountSeries($tid: [ID!]) {
                 findStudios(studio_filter: {tags: {value: $tid, modifier: INCLUDES}}) { count }
             }"""
-            count_res = await stash_query(count_q, {"tid": [series_tag_id]})
-            total_count = count_res.get("data", {}).get("findStudios", {}).get("count", 0)
-
             page = (start_index // limit) + 1
             q = """query FindSeriesStudios($tid: [ID!], $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {
                 findStudios(
@@ -1269,7 +1289,14 @@ async def endpoint_items(request):
                 }
             }"""
             folder_sort, folder_dir = get_stash_sort_params(request, context="folders")
-            res = await stash_query(q, {"tid": [series_tag_id], "page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir})
+            count_res, res = await stash_query_pair(
+                count_q,
+                {"tid": [series_tag_id]},
+                q,
+                {"tid": [series_tag_id], "page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir},
+            )
+            total_count = count_res.get("data", {}).get("findStudios", {}).get("count", 0)
+
             studios = res.get("data", {}).get("findStudios", {}).get("studios", [])
             for s in studios:
                 items.append({
@@ -1537,7 +1564,7 @@ async def endpoint_items(request):
                 studio_filter: {scene_count: {value: 0, modifier: GREATER_THAN}},
                 filter: {page: $page, per_page: $per_page, sort: $sort, direction: $direction}
             ) {
-                studios { id name image_path scene_count }
+                studios { id name image_path scene_count favorite }
             }
         }"""
         res = await stash_query(q, {"page": page, "per_page": fetch_limit, "sort": folder_sort, "direction": folder_dir})
@@ -1555,7 +1582,7 @@ async def endpoint_items(request):
                 "RecursiveItemCount": s.get("scene_count", 0),
                 "PrimaryImageAspectRatio": 0.6667,
                 "BackdropImageTags": [],
-                "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": False, "Played": False, "Key": f"studio-{s['id']}"}
+                "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": bool(s.get("favorite")), "Played": False, "Key": f"studio-{s['id']}"}
             }
             if stype == "BoxSet":
                 studio_item["CollectionType"] = "movies"
@@ -1596,11 +1623,7 @@ async def endpoint_items(request):
             count_q = """query CountScenes($sid: [ID!]) {
                 findScenes(scene_filter: {studios: {value: $sid, modifier: INCLUDES}}) { count }
             }"""
-            count_res = await stash_query(count_q, {"sid": [studio_id]})
-            total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
-
             page = (start_index // limit) + 1
-
             q = f"""query FindScenes($sid: [ID!], $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
                 findScenes(
                     scene_filter: {{studios: {{value: $sid, modifier: INCLUDES}}}},
@@ -1609,7 +1632,14 @@ async def endpoint_items(request):
                     scenes {{ {scene_fields} }}
                 }}
             }}"""
-            res = await stash_query(q, {"sid": [studio_id], "page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction})
+            count_res, res = await stash_query_pair(
+                count_q,
+                {"sid": [studio_id]},
+                q,
+                {"sid": [studio_id], "page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction},
+            )
+            total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
+
             scenes = res.get("data", {}).get("findScenes", {}).get("scenes", [])
             logger.debug(f"Studio {studio_id} returned {len(scenes)} scenes (page {page}, total {total_count})")
             # Movie-only / Episode-only split by SERIES-studio detection.
@@ -1726,11 +1756,7 @@ async def endpoint_items(request):
             count_q = """query CountScenes($pid: [ID!]) {
                 findScenes(scene_filter: {performers: {value: $pid, modifier: INCLUDES}}) { count }
             }"""
-            count_res = await stash_query(count_q, {"pid": [performer_id]})
-            total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
-
             page = (start_index // limit) + 1
-
             q = f"""query FindScenes($pid: [ID!], $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
                 findScenes(
                     scene_filter: {{performers: {{value: $pid, modifier: INCLUDES}}}},
@@ -1739,7 +1765,14 @@ async def endpoint_items(request):
                     scenes {{ {scene_fields} }}
                 }}
             }}"""
-            res = await stash_query(q, {"pid": [performer_id], "page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction})
+            count_res, res = await stash_query_pair(
+                count_q,
+                {"pid": [performer_id]},
+                q,
+                {"pid": [performer_id], "page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction},
+            )
+            total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
+
             scenes = res.get("data", {}).get("findScenes", {}).get("scenes", [])
             logger.debug(f"Performer {performer_id} returned {len(scenes)} scenes (page {page}, total {total_count})")
             # If the request specifically asked for Episode only, keep only
@@ -1871,11 +1904,7 @@ async def endpoint_items(request):
             count_q = """query CountScenes($mid: [ID!]) {
                 findScenes(scene_filter: {movies: {value: $mid, modifier: INCLUDES}}) { count }
             }"""
-            count_res = await stash_query(count_q, {"mid": [group_id]})
-            total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
-
             page = (start_index // limit) + 1
-
             q = f"""query FindScenes($mid: [ID!], $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
                 findScenes(
                     scene_filter: {{movies: {{value: $mid, modifier: INCLUDES}}}},
@@ -1884,7 +1913,14 @@ async def endpoint_items(request):
                     scenes {{ {scene_fields} }}
                 }}
             }}"""
-            res = await stash_query(q, {"mid": [group_id], "page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction})
+            count_res, res = await stash_query_pair(
+                count_q,
+                {"mid": [group_id]},
+                q,
+                {"mid": [group_id], "page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction},
+            )
+            total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
+
             scenes = res.get("data", {}).get("findScenes", {}).get("scenes", [])
             logger.debug(f"Group {group_id} returned {len(scenes)} scenes (page {page}, total {total_count})")
             wants_episode_only = (
@@ -2080,12 +2116,7 @@ async def endpoint_items(request):
         count_q = """query CountScenes($tid: [ID!]) {
             findScenes(scene_filter: {tags: {value: $tid, modifier: INCLUDES}}) { count }
         }"""
-        count_res = await stash_query(count_q, {"tid": [tag_id]})
-        total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
-
-        # Calculate page
         page = (start_index // limit) + 1
-
         q = f"""query FindScenes($tid: [ID!], $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
             findScenes(
                 scene_filter: {{tags: {{value: $tid, modifier: INCLUDES}}}},
@@ -2094,7 +2125,15 @@ async def endpoint_items(request):
                 scenes {{ {scene_fields} }}
             }}
         }}"""
-        res = await stash_query(q, {"tid": [tag_id], "page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction})
+        count_res, res = await stash_query_pair(
+            count_q,
+            {"tid": [tag_id]},
+            q,
+            {"tid": [tag_id], "page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction},
+        )
+        total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
+        # Calculate page
+
         scenes = res.get("data", {}).get("findScenes", {}).get("scenes", [])
         logger.debug(f"Tag {tag_id} returned {len(scenes)} scenes (page {page}, total {total_count})")
         for s in scenes:
@@ -2139,12 +2178,7 @@ async def endpoint_items(request):
                 count_q = """query CountScenes($tid: [ID!]) {
                     findScenes(scene_filter: {tags: {value: $tid, modifier: INCLUDES}}) { count }
                 }"""
-                count_res = await stash_query(count_q, {"tid": [tag_id]})
-                total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
-
-                # Calculate page
                 page = (start_index // limit) + 1
-
                 q = f"""query FindScenes($tid: [ID!], $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
                     findScenes(
                         scene_filter: {{tags: {{value: $tid, modifier: INCLUDES}}}},
@@ -2153,7 +2187,15 @@ async def endpoint_items(request):
                         scenes {{ {scene_fields} }}
                     }}
                 }}"""
-                res = await stash_query(q, {"tid": [tag_id], "page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction})
+                count_res, res = await stash_query_pair(
+                    count_q,
+                    {"tid": [tag_id]},
+                    q,
+                    {"tid": [tag_id], "page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction},
+                )
+                total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
+                # Calculate page
+
                 scenes = res.get("data", {}).get("findScenes", {}).get("scenes", [])
                 logger.debug(f"Tag '{tag_name}' (id={tag_id}) returned {len(scenes)} scenes (page {page}, total {total_count})")
                 for s in scenes:
@@ -2188,9 +2230,6 @@ async def endpoint_items(request):
                 count_q = """query { findPerformers(performer_filter: {filter_favorites: true}) { count } }"""
             else:
                 count_q = """query { findPerformers { count } }"""
-            count_res = await stash_query(count_q)
-            total_count = count_res.get("data", {}).get("findPerformers", {}).get("count", 0)
-
             fav_clause = "performer_filter: {filter_favorites: true}, " if filter_favorites else ""
             page = (start_index // limit) + 1
             q = f"""query FindPerformers($page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
@@ -2200,7 +2239,14 @@ async def endpoint_items(request):
                     performers {{ id name image_path scene_count favorite }}
                 }}
             }}"""
-            res = await stash_query(q, {"page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir})
+            count_res, res = await stash_query_pair(
+                count_q,
+                None,
+                q,
+                {"page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir},
+            )
+            total_count = count_res.get("data", {}).get("findPerformers", {}).get("count", 0)
+
             performers = res.get("data", {}).get("findPerformers", {}).get("performers", [])
             logger.debug(f"Global Person query (IsFavorite={filter_favorites}): {len(performers)} performers (page {page}, total {total_count})")
 
@@ -2225,6 +2271,115 @@ async def endpoint_items(request):
                 else:
                     performer_item["ImageTags"] = {}
                 items.append(performer_item)
+            return JSONResponse({
+                "Items": items,
+                "TotalRecordCount": total_count,
+                "StartIndex": start_index,
+            })
+
+        # Root-level Studio + IsFavorite probe. Clients that render a favourites
+        # screen fire one probe per IncludeItemTypes value; a Studio probe used
+        # to fall into "Global query skipped" and return an empty list, so
+        # studios favourited in Stash were invisible even though the write path
+        # (user_actions._toggle_studio_favorite) worked fine.
+        # Stash exposes this as StudioFilterType.favorite — a plain Boolean.
+        # Note it is NOT the performer filter's `filter_favorites`; passing that
+        # to studio_filter fails GraphQL validation with a 422.
+        # Gated on filter_favorites so a bare Studio probe keeps its previous
+        # behaviour (the Studios library is browsed via ParentId=root-studios).
+        if "studio" in include_types_lower and filter_favorites:
+            folder_sort, folder_dir = get_stash_sort_params(request, context="folders")
+            from stash_jellyfin_proxy.mapping.image_policy import studio_item_type
+            stype = studio_item_type(request)
+            page = (start_index // limit) + 1
+            q = """query FindFavoriteStudios($page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {
+                findStudios(
+                    studio_filter: {favorite: true},
+                    filter: {page: $page, per_page: $per_page, sort: $sort, direction: $direction}
+                ) {
+                    studios { id name image_path scene_count favorite }
+                }
+            }"""
+            count_res, res = await stash_query_pair(
+                "query { findStudios(studio_filter: {favorite: true}) { count } }",
+                None,
+                q,
+                {"page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir},
+            )
+            total_count = count_res.get("data", {}).get("findStudios", {}).get("count", 0)
+
+            studios = res.get("data", {}).get("findStudios", {}).get("studios", [])
+            logger.debug(f"Global Studio query (IsFavorite=True): {len(studios)} studios (page {page}, total {total_count})")
+            for s in studios:
+                studio_item = {
+                    "Name": s["name"],
+                    "SortName": sort_name_for(s["name"]),
+                    "Id": f"studio-{s['id']}",
+                    "ServerId": runtime.SERVER_ID,
+                    "Type": stype,
+                    "IsFolder": True,
+                    "ChildCount": s.get("scene_count", 0),
+                    "RecursiveItemCount": s.get("scene_count", 0),
+                    "PrimaryImageAspectRatio": 0.6667,
+                    "BackdropImageTags": [],
+                    "ImageTags": {"Primary": "img"} if s.get("image_path") else {},
+                    "ImageBlurHashes": {"Primary": {"img": "000000"}} if s.get("image_path") else {},
+                    "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": bool(s.get("favorite")), "Played": False, "Key": f"studio-{s['id']}"},
+                }
+                if stype == "BoxSet":
+                    studio_item["CollectionType"] = "movies"
+                items.append(studio_item)
+            return JSONResponse({
+                "Items": items,
+                "TotalRecordCount": total_count,
+                "StartIndex": start_index,
+            })
+
+        # BoxSet + IsFavorite rail. SenPlayer's favourites screen probes
+        # Movie/Series/Season/Episode/Video/BoxSet/Person and never asks for
+        # Studio (observed live 2026-09-18 20:32), so the Studio branch above is
+        # unreachable for it. BoxSet-only probes were skipped outright, which is
+        # what dropped favourited studios off that screen. Emit favourite
+        # studios typed BoxSet so the items survive the client's include-type
+        # filter — clients discard items whose Type was not requested.
+        if "boxset" in include_types_lower and filter_favorites:
+            folder_sort, folder_dir = get_stash_sort_params(request, context="folders")
+            page = (start_index // limit) + 1
+            q = """query FindFavoriteStudios($page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {
+                findStudios(
+                    studio_filter: {favorite: true},
+                    filter: {page: $page, per_page: $per_page, sort: $sort, direction: $direction}
+                ) {
+                    studios { id name image_path scene_count favorite }
+                }
+            }"""
+            count_res, res = await stash_query_pair(
+                "query { findStudios(studio_filter: {favorite: true}) { count } }",
+                None,
+                q,
+                {"page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir},
+            )
+            total_count = count_res.get("data", {}).get("findStudios", {}).get("count", 0)
+
+            studios = res.get("data", {}).get("findStudios", {}).get("studios", [])
+            logger.debug(f"Global BoxSet rail (IsFavorite=True): {len(studios)} favorite studios (page {page}, total {total_count})")
+            for s in studios:
+                items.append({
+                    "Name": s["name"],
+                    "SortName": sort_name_for(s["name"]),
+                    "Id": f"studio-{s['id']}",
+                    "ServerId": runtime.SERVER_ID,
+                    "Type": "BoxSet",
+                    "CollectionType": "movies",
+                    "IsFolder": True,
+                    "ChildCount": s.get("scene_count", 0),
+                    "RecursiveItemCount": s.get("scene_count", 0),
+                    "PrimaryImageAspectRatio": 0.6667,
+                    "ImageTags": {"Primary": "img"} if s.get("image_path") else {},
+                    "ImageBlurHashes": {"Primary": {"img": "000000"}} if s.get("image_path") else {},
+                    "BackdropImageTags": [],
+                    "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": bool(s.get("favorite")), "Played": False, "Key": f"studio-{s['id']}"},
+                })
             return JSONResponse({
                 "Items": items,
                 "TotalRecordCount": total_count,
@@ -2296,8 +2451,6 @@ async def endpoint_items(request):
                 count_q = f"""query CountFilteredScenes{count_header} {{
                     findScenes(scene_filter: {{{filter_body}}}) {{ count }}
                 }}"""
-                count_res = await stash_query(count_q, filter_vars)
-                total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
                 page = (start_index // limit) + 1
                 q = f"""query FindFilteredScenes($page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!{var_defs}) {{
                     findScenes(
@@ -2307,7 +2460,14 @@ async def endpoint_items(request):
                 }}"""
                 qvars = {"page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction}
                 qvars.update(filter_vars)
-                res = await stash_query(q, qvars)
+                count_res, res = await stash_query_pair(
+                    count_q,
+                    filter_vars,
+                    q,
+                    qvars,
+                )
+                total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
+
                 scenes = res.get("data", {}).get("findScenes", {}).get("scenes", [])
                 active = [f for f in ("IsFavorite" if filter_favorites else None,
                                       "IsPlayed" if filter_played else None,
@@ -2325,15 +2485,20 @@ async def endpoint_items(request):
                 total_count = 0
             else:
                 count_q = "query { findMovies { count } }"
-                count_res = await stash_query(count_q)
-                total_count = count_res.get("data", {}).get("findMovies", {}).get("count", 0)
                 page = (start_index // limit) + 1
                 q = """query FindMovies($page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {
                     findMovies(filter: {page: $page, per_page: $per_page, sort: $sort, direction: $direction}) {
                         movies { id name scene_count tags { name } }
                     }
                 }"""
-                res = await stash_query(q, {"page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir})
+                count_res, res = await stash_query_pair(
+                    count_q,
+                    None,
+                    q,
+                    {"page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir},
+                )
+                total_count = count_res.get("data", {}).get("findMovies", {}).get("count", 0)
+
                 movies = res.get("data", {}).get("findMovies", {}).get("movies", [])
                 logger.debug(f"Global Movie query returned {len(movies)} groups (page {page}, total {total_count})")
             for m in movies:
@@ -2386,8 +2551,6 @@ async def endpoint_items(request):
                     count_q = f"""query CountFilteredScenes{count_header} {{
                         findScenes(scene_filter: {{{filter_body}}}) {{ count }}
                     }}"""
-                    count_res = await stash_query(count_q, filter_vars)
-                    total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
                     page = (start_index // limit) + 1
                     q = f"""query FindFilteredScenes($page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!{var_defs}) {{
                         findScenes(
@@ -2397,22 +2560,34 @@ async def endpoint_items(request):
                     }}"""
                     qvars = {"page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction}
                     qvars.update(filter_vars)
-                    res = await stash_query(q, qvars)
+                    count_res, res = await stash_query_pair(
+                        count_q,
+                        filter_vars,
+                        q,
+                        qvars,
+                    )
+                    total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
+
                     scenes = res.get("data", {}).get("findScenes", {}).get("scenes", [])
                     logger.debug(f"Video+filter returned {len(scenes)} scenes (page {page}, total {total_count})")
                     for s in scenes:
                         items.append(format_jellyfin_item(s))
                 else:
                     count_q = "query { findScenes { count } }"
-                    count_res = await stash_query(count_q)
-                    total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
                     page = (start_index // limit) + 1
                     q = f"""query FindScenes($page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
                         findScenes(filter: {{page: $page, per_page: $per_page, sort: $sort, direction: $direction}}) {{
                             scenes {{ {scene_fields} }}
                         }}
                     }}"""
-                    res = await stash_query(q, {"page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction})
+                    count_res, res = await stash_query_pair(
+                        count_q,
+                        None,
+                        q,
+                        {"page": page, "per_page": limit, "sort": sort_field, "direction": sort_direction},
+                    )
+                    total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
+
                     scenes = res.get("data", {}).get("findScenes", {}).get("scenes", [])
                     logger.debug(f"Global query returned {len(scenes)} scenes (page {page}, total {total_count})")
                     for s in scenes:
@@ -2735,9 +2910,6 @@ async def similar_items_for(item_id: str, limit: int = 20, start_index: int = 0)
     count_q = f"""query CountSimilar($ids: [ID!]) {{
         findScenes({clause}) {{ count }}
     }}"""
-    count_res = await stash_query(count_q, cvars)
-    total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
-
     q = f"""query FindSimilar($ids: [ID!], $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
         findScenes(
             {clause},
@@ -2748,7 +2920,14 @@ async def similar_items_for(item_id: str, limit: int = 20, start_index: int = 0)
     }}"""
     q_vars = dict(cvars)
     q_vars.update({"page": page, "per_page": limit, "sort": "date", "direction": "DESC"})
-    res = await stash_query(q, q_vars)
+    count_res, res = await stash_query_pair(
+        count_q,
+        cvars,
+        q,
+        q_vars,
+    )
+    total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
+
     scenes = res.get("data", {}).get("findScenes", {}).get("scenes", [])
     items = [format_jellyfin_item(s, parent_id=item_id) for s in scenes]
     logger.debug(f"Similar for {item_id}: {len(items)} items (page {page}, total {total_count})")

@@ -168,6 +168,23 @@ async def stash_query(query: str, variables: Dict[str, Any] = None, retries: int
     return {"errors": [str(last_error)], "data": {}}
 
 
+async def stash_query_pair(
+    count_q: str, count_vars: Dict[str, Any],
+    page_q: str, page_vars: Dict[str, Any],
+):
+    """Run a (count, page) query pair concurrently.
+
+    List endpoints need `findX(...) { count }` plus the paginated payload;
+    issuing them serially doubles latency for no reason since the two are
+    independent. stash_query never raises (it returns an error dict), so
+    gather without return_exceptions is safe.
+    """
+    return await asyncio.gather(
+        stash_query(count_q, count_vars),
+        stash_query(page_q, page_vars),
+    )
+
+
 async def fetch_from_stash(
     url: str,
     extra_headers: Dict[str, str] = None,
