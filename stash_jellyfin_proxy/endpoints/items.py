@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 from starlette.responses import JSONResponse
 
 from stash_jellyfin_proxy import runtime
+from stash_jellyfin_proxy.mapping.performer import PACKET_FIELDS
 from stash_jellyfin_proxy.mapping.scene import format_jellyfin_item, is_group_favorite
 from stash_jellyfin_proxy.stash.client import stash_query, stash_query_pair
 from stash_jellyfin_proxy.stash.tags import get_or_create_tag
@@ -1138,8 +1139,12 @@ async def endpoint_items(request):
 
                     studios = res.get("data", {}).get("findStudios", {}).get("studios", [])
                     logger.debug(f"Saved filter returned {len(studios)} studios (page {page}, total {total_count})")
-                    from stash_jellyfin_proxy.mapping.image_policy import studio_item_type as _sit
+                    from stash_jellyfin_proxy.mapping.image_policy import (
+                        studio_item_type as _sit,
+                        studio_collection_type as _sct,
+                    )
                     _stype = _sit(request)
+                    _scol = _sct(_stype)
                     for s in studios:
                         studio_item = {
                             "Name": s["name"],
@@ -1156,8 +1161,8 @@ async def endpoint_items(request):
                             "PrimaryImageAspectRatio": 0.6667,
                             "BackdropImageTags": []
                         }
-                        if _stype == "BoxSet":
-                            studio_item["CollectionType"] = "movies"
+                        if _scol:
+                            studio_item["CollectionType"] = _scol
                         items.append(studio_item)
 
                 elif filter_mode == "GROUPS":
@@ -1568,8 +1573,12 @@ async def endpoint_items(request):
             }
         }"""
         res = await stash_query(q, {"page": page, "per_page": fetch_limit, "sort": folder_sort, "direction": folder_dir})
-        from stash_jellyfin_proxy.mapping.image_policy import studio_item_type
+        from stash_jellyfin_proxy.mapping.image_policy import (
+            studio_item_type,
+            studio_collection_type,
+        )
         stype = studio_item_type(request)
+        scol = studio_collection_type(stype)
         for s in res.get("data", {}).get("findStudios", {}).get("studios", []):
             studio_item = {
                 "Name": s["name"],
@@ -1584,8 +1593,8 @@ async def endpoint_items(request):
                 "BackdropImageTags": [],
                 "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": bool(s.get("favorite")), "Played": False, "Key": f"studio-{s['id']}"}
             }
-            if stype == "BoxSet":
-                studio_item["CollectionType"] = "movies"
+            if scol:
+                studio_item["CollectionType"] = scol
             if s.get("image_path"):
                 studio_item["ImageTags"] = {"Primary": "img"}
                 studio_item["ImageBlurHashes"] = {"Primary": {"img": "000000"}}
@@ -2602,151 +2611,38 @@ async def endpoint_items(request):
     return JSONResponse(response_data)
 
 
-async def _fetch_performer_packet(performer_id: str) -> Optional[Dict[str, Any]]:
+async def _fetch_performer_packet(performer_id: str, request=None) -> Optional[Dict[str, Any]]:
     """Fetch the rich performer packet and shape it for Jellyfin's About
     panel. Stash has no free-form Overview text most of the time, so we
     synthesize a readable description from the structured attributes
     (gender, age, country, measurements, career span, etc.) so Swiftfin's
     performer page isn't blank. Returns None if the performer doesn't
-    exist."""
-    q = """query PerformerPacket($id: ID!) {
-        findPerformer(id: $id) {
-            id name disambiguation gender birthdate death_date
-            ethnicity country hair_color eye_color
-            height_cm weight measurements fake_tits
-            career_start career_end tattoos piercings
-            alias_list details rating100 favorite scene_count image_path
-            tags { id name }
-            stash_ids { endpoint stash_id }
-        }
-    }"""
+    exist.
+
+    `request` is optional and only used to resolve the per-client item
+    Type (Person vs BoxSet). Without it the caller decides the type.
+    """
+    q = "query PerformerPacket($id: ID!) { findPerformer(id: $id) { %s } }" % PACKET_FIELDS
     res = await stash_query(q, {"id": performer_id})
     performer = ((res or {}).get("data") or {}).get("findPerformer")
     if not performer:
         return None
 
-    out: Dict[str, Any] = {}
+    from stash_jellyfin_proxy.mapping.image_policy import performer_item_type
+    from stash_jellyfin_proxy.mapping.performer import performer_fields
 
-    # Structured Overview — one short sentence summarising the performer,
-    # then paragraphs for the free-form details / aliases. Keeps Swiftfin's
-    # About panel populated even when Stash has no hand-written bio.
-    summary_bits = []
-    gender = (performer.get("gender") or "").lower()
-    if gender == "female":
-        summary_bits.append("Female performer")
-    elif gender == "male":
-        summary_bits.append("Male performer")
-    elif gender:
-        summary_bits.append(gender.replace("_", " ").capitalize() + " performer")
-    else:
-        summary_bits.append("Performer")
+    # Same builder the /Persons list uses, so the two views can never
+    # disagree about which fields a performer carries.
+    item_type = performer_item_type(request) if request is not None else "Person"
+    item = performer_fields(performer, f"performer-{performer_id}", item_type)
 
-    bd = performer.get("birthdate")
-    if bd:
-        try:
-            import datetime as _dt
-            today = _dt.date.today()
-            birth = _dt.date.fromisoformat(bd)
-            age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
-            summary_bits[-1] += f", born {bd} ({age})" if not performer.get("death_date") else f", born {bd}"
-        except Exception:
-            pass
-
-    country = performer.get("country")
-    if country:
-        summary_bits.append(f"from {country}")
-
-    c_start = performer.get("career_start")
-    c_end = performer.get("career_end")
-    if c_start and c_end and c_start != c_end:
-        summary_bits.append(f"active {c_start}–{c_end}")
-    elif c_start:
-        summary_bits.append(f"active since {c_start}")
-
-    scene_count = int(performer.get("scene_count") or 0)
-    if scene_count:
-        summary_bits.append(f"{scene_count} scene{'s' if scene_count != 1 else ''} in library")
-
-    parts: list[str] = []
-    parts.append(", ".join(summary_bits) + ".")
-
-    # Physical attributes — second paragraph, only emit keys with values.
-    phys: list[str] = []
-    if performer.get("height_cm"):
-        cm = int(performer["height_cm"])
-        inches = round(cm / 2.54)
-        phys.append(f"Height: {cm} cm ({inches // 12}'{inches % 12}\")")
-    if performer.get("weight"):
-        phys.append(f"Weight: {performer['weight']} kg")
-    if performer.get("measurements"):
-        phys.append(f"Measurements: {performer['measurements']}")
-    if performer.get("fake_tits"):
-        phys.append(f"Breasts: {performer['fake_tits']}")
-    if performer.get("ethnicity"):
-        phys.append(f"Ethnicity: {performer['ethnicity']}")
-    if performer.get("hair_color"):
-        phys.append(f"Hair: {performer['hair_color']}")
-    if performer.get("eye_color"):
-        phys.append(f"Eyes: {performer['eye_color']}")
-    if phys:
-        parts.append("\n".join(phys))
-
-    # Body-mod notes.
-    mods: list[str] = []
-    if performer.get("tattoos"):
-        mods.append(f"Tattoos: {performer['tattoos']}")
-    if performer.get("piercings"):
-        mods.append(f"Piercings: {performer['piercings']}")
-    if mods:
-        parts.append("\n".join(mods))
-
-    aliases = [a for a in (performer.get("alias_list") or []) if a]
-    if aliases:
-        parts.append(f"Also known as: {', '.join(aliases)}")
-
-    if performer.get("details"):
-        # Prepend hand-written bio if present.
-        parts.insert(0, performer["details"].strip())
-
-    out["Overview"] = "\n\n".join(parts)
-
-    if performer.get("rating100") is not None:
-        try:
-            out["CommunityRating"] = round(float(performer["rating100"]) / 10.0, 1)
-        except (TypeError, ValueError):
-            pass
-
-    # Birthday as PremiereDate / ProductionYear for Swiftfin's "born" field.
-    if performer.get("birthdate"):
-        try:
-            out["PremiereDate"] = f"{performer['birthdate']}T00:00:00.0000000Z"
-            out["ProductionYear"] = int(performer["birthdate"][:4])
-        except (ValueError, TypeError):
-            pass
-    if performer.get("death_date"):
-        try:
-            out["EndDate"] = f"{performer['death_date']}T00:00:00.0000000Z"
-        except (ValueError, TypeError):
-            pass
-
-    tag_names = [
-        (t.get("name") or "").strip()
-        for t in (performer.get("tags") or [])
-        if t.get("name")
-    ]
-    if tag_names:
-        out["Genres"] = tag_names
-        out["Tags"] = tag_names
-
-    stash_ids = performer.get("stash_ids") or []
-    if stash_ids and stash_ids[0].get("stash_id"):
-        out["ProviderIds"] = {"StashDb": stash_ids[0]["stash_id"]}
-
-    out["_favorite"] = bool(performer.get("favorite"))
-    out["_scene_count"] = scene_count
-    out["_name"] = performer.get("name") or f"Performer {performer_id}"
-    out["_has_image"] = bool(performer.get("image_path"))
-    return out
+    # Callers pop these; keep them so the detail endpoint can merge the
+    # packet without re-querying.
+    item["_favorite"] = bool(performer.get("favorite"))
+    item["_scene_count"] = int(performer.get("scene_count") or 0)
+    item["_name"] = performer.get("name") or f"Performer {performer_id}"
+    item["_has_image"] = bool(performer.get("image_path"))
+    return item
 
 
 async def _fetch_studio_packet(studio_id: str) -> Optional[Dict[str, Any]]:
@@ -3177,7 +3073,10 @@ async def endpoint_item_details(request):
 
     elif item_id.startswith("studio-"):
         # Fetch actual studio info from Stash
-        from stash_jellyfin_proxy.mapping.image_policy import studio_item_type
+        from stash_jellyfin_proxy.mapping.image_policy import (
+            studio_item_type,
+            studio_collection_type,
+        )
         studio_id = item_id.removeprefix("studio-")
         packet = await _fetch_studio_packet(studio_id)
         if not packet:
@@ -3207,8 +3106,9 @@ async def endpoint_item_details(request):
                 "IsFavorite": is_favorite, "Played": False, "Key": item_id,
             },
         }
-        if stype == "BoxSet":
-            out["CollectionType"] = "movies"
+        _col = studio_collection_type(stype)
+        if _col:
+            out["CollectionType"] = _col
         out.update(packet)
         return JSONResponse(out)
 
@@ -3242,46 +3142,24 @@ async def endpoint_item_details(request):
         else:
             performer_id = item_id.replace("person-", "")
 
-        packet = await _fetch_performer_packet(performer_id)
+        packet = await _fetch_performer_packet(performer_id, request=request)
         if not packet:
             logger.warning(f"Performer not found: {performer_id}")
             return JSONResponse({"Items": [], "TotalRecordCount": 0}, status_code=404)
 
-        performer_name = packet.pop("_name")
-        scene_count = packet.pop("_scene_count")
-        is_favorite = packet.pop("_favorite")
-        has_image = packet.pop("_has_image")
+        # Strip the bookkeeping keys; everything else is already a complete
+        # Jellyfin item built by mapping.performer.performer_fields — the
+        # same function the /Persons list uses, so the rail and the detail
+        # page can no longer disagree about which fields a performer has.
+        for key in ("_name", "_scene_count", "_favorite", "_has_image"):
+            packet.pop(key, None)
 
-        from stash_jellyfin_proxy.mapping.image_policy import performer_item_type
-        item_type = performer_item_type(request)  # "Person" for Swiftfin, else "BoxSet"
-
-        out = {
-            "Name": performer_name,
-            "SortName": sort_name_for(performer_name),
-            "Id": item_id,
-            "ServerId": runtime.SERVER_ID,
-            "Type": item_type,
-            "IsFolder": True,
-            "ImageTags": {"Primary": "img"} if has_image else {},
-            "ImageBlurHashes": ({"Primary": {"img": "000000"}, "Backdrop": {"img": "000000"}} if has_image else {}),
-            "PrimaryImageAspectRatio": 0.6667,
-            # BackdropImageTags populated so Swiftfin's performer-page hero
-            # banner actually fires the backdrop request.
-            "BackdropImageTags": ["img"] if has_image else [],
-            "ChildCount": scene_count,
-            "RecursiveItemCount": scene_count,
-            "UserData": {
-                "PlaybackPositionTicks": 0, "PlayCount": 0,
-                "IsFavorite": is_favorite, "Played": False, "Key": item_id,
-            },
-        }
-        # BoxSet-typed performers (Infuse/SenPlayer) need CollectionType for
-        # the grid renderer to work. Person-typed performers skip it — Swiftfin
-        # renders its native Person screen which doesn't use CollectionType.
-        if item_type == "BoxSet":
-            out["CollectionType"] = "movies"
-        out.update(packet)
-        return JSONResponse(out)
+        # Preserve the id exactly as requested. Clients reach a performer by
+        # `person-302` / `person-performer-302` as well as `performer-302`,
+        # and their bookmarked id has to keep working.
+        packet["Id"] = item_id
+        packet["UserData"] = dict(packet.get("UserData") or {}, Key=item_id)
+        return JSONResponse(packet)
 
     elif item_id == "root-groups":
         # Get actual count

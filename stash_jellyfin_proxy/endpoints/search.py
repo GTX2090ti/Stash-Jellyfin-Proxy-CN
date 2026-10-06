@@ -283,9 +283,19 @@ async def endpoint_genres(request):
 
 
 async def endpoint_persons(request):
-    """`GET /Persons` — performers as Jellyfin Person items with search
-    and IsFavorite filter support. Gated by runtime.SEARCH_INCLUDE_PERFORMERS
-    when the request is a search (has SearchTerm)."""
+    """`GET /Persons` — performers as Jellyfin Person/BoxSet items with
+    search and IsFavorite filter support. Gated by runtime.SEARCH_INCLUDE_PERFORMERS
+    when the request is a search (has SearchTerm).
+
+    Items are built by `mapping.performer.performer_fields`, the same
+    function the detail endpoint uses. That is deliberate: the list used
+    to emit a 6-key stub, so clients rendering their People rail from this
+    response had no UserData (the favourite heart stayed empty), no
+    SortName (name sorting was wrong), and no Overview / PremiereDate.
+    Sharing the builder means those fields can never drift apart again.
+    """
+    from stash_jellyfin_proxy.mapping.performer import LIST_FIELDS, performer_fields
+
     start_index = max(0, int(request.query_params.get("startIndex") or request.query_params.get("StartIndex") or 0))
     limit = int(request.query_params.get("limit") or request.query_params.get("Limit") or runtime.DEFAULT_PAGE_SIZE)
     limit = max(1, min(limit, runtime.MAX_PAGE_SIZE))
@@ -311,6 +321,7 @@ async def endpoint_persons(request):
     filter_favorites = "isfavorite" in filters_param.lower()
     folder_sort, folder_dir = get_stash_sort_params(request, context="folders")
 
+    sel = "performers { %s }" % LIST_FIELDS
     try:
         page = (start_index // limit) + 1
 
@@ -320,54 +331,44 @@ async def endpoint_persons(request):
             count_q = """query CountPerformers($q: String!) { findPerformers(filter: {q: $q}) { count } }"""
             count_res = await stash_query(count_q, {"q": clean_search})
             total_count = count_res.get("data", {}).get("findPerformers", {}).get("count", 0)
-            q = """query FindPerformers($q: String!, $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {
-                findPerformers(filter: {q: $q, page: $page, per_page: $per_page, sort: $sort, direction: $direction}) {
-                    performers { id name image_path scene_count }
-                }
-            }"""
+            q = f"""query FindPerformers($q: String!, $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
+                findPerformers(filter: {{q: $q, page: $page, per_page: $per_page, sort: $sort, direction: $direction}}) {{
+                    {sel}
+                }}
+            }}"""
             res = await stash_query(q, {"q": clean_search, "page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir})
             logger.debug(f"Persons search '{clean_search}' returned {total_count} matches")
         elif filter_favorites:
             count_q = """query { findPerformers(performer_filter: {filter_favorites: true}) { count } }"""
             count_res = await stash_query(count_q)
             total_count = count_res.get("data", {}).get("findPerformers", {}).get("count", 0)
-            q = """query FindFavPerformers($page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {
+            q = f"""query FindFavPerformers($page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
                 findPerformers(
-                    performer_filter: {filter_favorites: true},
-                    filter: {page: $page, per_page: $per_page, sort: $sort, direction: $direction}
-                ) {
-                    performers { id name image_path scene_count }
-                }
-            }"""
+                    performer_filter: {{filter_favorites: true}},
+                    filter: {{page: $page, per_page: $per_page, sort: $sort, direction: $direction}}
+                ) {{
+                    {sel}
+                }}
+            }}"""
             res = await stash_query(q, {"page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir})
             logger.debug(f"Persons favorites returned {total_count} favorite performers")
         else:
             count_q = """query { findPerformers { count } }"""
             count_res = await stash_query(count_q)
             total_count = count_res.get("data", {}).get("findPerformers", {}).get("count", 0)
-            q = """query FindPerformers($page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {
-                findPerformers(filter: {page: $page, per_page: $per_page, sort: $sort, direction: $direction}) {
-                    performers { id name image_path scene_count }
-                }
-            }"""
+            q = f"""query FindPerformers($page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
+                findPerformers(filter: {{page: $page, per_page: $per_page, sort: $sort, direction: $direction}}) {{
+                    {sel}
+                }}
+            }}"""
             res = await stash_query(q, {"page": page, "per_page": limit, "sort": folder_sort, "direction": folder_dir})
 
         performers = res.get("data", {}).get("findPerformers", {}).get("performers", [])
         item_type = performer_item_type(request)
-        items = []
-        for p in performers:
-            item = {
-                "Name": p["name"],
-                "Id": f"performer-{p['id']}",
-                "ServerId": runtime.SERVER_ID,
-                "Type": item_type,
-                "ImageTags": {"Primary": "img"},
-                "ImageBlurHashes": {"Primary": {"img": "000000"}},
-                "BackdropImageTags": [],
-            }
-            if p.get("scene_count") is not None:
-                item["ChildCount"] = p["scene_count"]
-            items.append(item)
+        items = [
+            performer_fields(p, f"performer-{p['id']}", item_type)
+            for p in performers
+        ]
         return JSONResponse({"Items": items, "TotalRecordCount": total_count, "StartIndex": start_index})
     except Exception as e:
         logger.error(f"Error getting persons: {e}")

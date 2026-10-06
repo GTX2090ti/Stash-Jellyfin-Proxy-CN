@@ -96,6 +96,50 @@ JS 侧同步设置 `documentElement.style.colorScheme`，否则浅色页面里�
 DARK 15.08:1；430px 无横向溢出、卡片左对齐；1000px 折两列；重载后主题保持；
 无页面异常与控制台错误。
 
+**第四处：演员（Performer）列表字段补全**
+
+`GET /Persons` —— 客户端「演员」网格直接用这个响应渲染 —— 此前只返回
+8 个字段（Name / Id / ServerId / Type / ImageTags / ImageBlurHashes /
+BackdropImageTags / ChildCount），而详情端点 `GET /Items/performer-{id}`
+返回 19 个。于是列表页缺失：
+
+| 字段 | 列表 | 详情 | 缺失后果 |
+|---|---|---|---|
+| `UserData` | ❌ | ✅ | 收藏心形不亮 |
+| `SortName` | ❌ | ✅ | 名称排序错乱 |
+| `Overview` | ❌ | ✅ | 卡片无简介 |
+| `PremiereDate` / `ProductionYear` | ❌ | ✅ | 列表无出生年 |
+| `CommunityRating` | ❌ | ✅ | 无评分 |
+| `CollectionType` | ❌ | ✅ | BoxSet 客户端网格不渲染 |
+| `IsFolder` / `RecursiveItemCount` | ❌ | ✅ | 类型判断与计数不符 |
+
+协议层并非缺数据：Stash 的 `findPerformers` 一个查询就能取全，只是列表
+端点没查、也没组装。
+
+**做法：新增 `mapping/performer.py` 作为唯一构造入口。**
+
+```
+performer_fields(performer, item_id, item_type)  → 完整 Jellyfin item
+build_overview(performer)                        → 从结构化属性合成简介
+PACKET_FIELDS / LIST_FIELDS                      → 详情全量 / 列表精简
+```
+
+两个端点都改为调用它，删除 `_fetch_performer_packet` 里约 100 行重复的
+Overview 拼装与字段赋值。**抽公共构造器而不是在列表端复制一份** ——
+两端点字段曾经不一致，根因正是「各写各的」；共用后不可能再漂移。
+
+`LIST_FIELDS` 省略三围等只有 About 面板读取的字段，使 261 个演员的列表
+查询保持便宜。详情端点继续保留**请求里的原始 id**（客户端也会用
+`person-302` / `person-performer-302` 访问，书签 id 必须继续可用）。
+
+**实测**（NAS 真机）：`/Persons` key 数 8 → 18，本页 5 个 item 零残缺，
+收藏演员 `IsFavorite=True` 正确反映，`/Studios` 与 `/Items` 无回归。
+仅 `CommunityRating` / `Genres` 仍缺，属该演员本身无评分无标签，非代码问题。
+
+新增 `tests/unit/test_performer_fields.py`（23 项）：钉住共享构造器输出、
+列表端点确实在用它（search / favorites / browse 三个查询分支）、
+以及「无收藏时仍须输出 `UserData`」等协议细节。
+
 ### v7.3.10-CN.10 —— 厂商收藏读侧补齐 + 性能优化（自研）
 
 **一、厂商（Studio）收藏：写入正常但读不出来**
