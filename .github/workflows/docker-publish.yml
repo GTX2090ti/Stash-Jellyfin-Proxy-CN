@@ -31,6 +31,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Read application version
+        id: appver
+        run: echo "version=$(grep -oP '__version__\s*=\s*\"\K[^\"]+' stash_jellyfin_proxy/__init__.py)" >> "$GITHUB_OUTPUT"
+
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v6
@@ -42,6 +46,17 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=7.3.10,enable={{is_default_branch}}
+          # Without an explicit `labels`, metadata-action emits its own
+          # org.opencontainers.* set, and build-push-action's `labels:`
+          # below OVERRIDES the Dockerfile's — so `LABEL version` in the
+          # Dockerfile was silently replaced by the ref name ("main"),
+          # leaving a stale/meaningless image identity. Deployment's
+          # freshness check reads that label, so it must carry the real
+          # application version. Read it from the single source of truth
+          # rather than duplicating the string a third time.
+          labels: |
+            org.opencontainers.image.version=${{ steps.appver.outputs.version }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
 
       - name: Copy package to build context
         run: cp -r stash_jellyfin_proxy build_docker/
