@@ -21,6 +21,28 @@ from stash_jellyfin_proxy.stash.scene import get_scene_info
 logger = logging.getLogger("stash-jellyfin-proxy")
 
 
+def is_playback_path(path: str) -> bool:
+    """Does this request address actual media delivery?
+
+    True for the stream endpoints and the subtitle deliveries; false for
+    the metadata documents that merely live under `/Videos/`.
+
+    The distinction matters because playback requests feed the dashboard's
+    live-stream table: treating a metadata fetch as playback opened a
+    phantom entry *and* issued an extra `get_scene_info` Stash query on
+    every call. Clients fetch `/Videos/{id}` right before starting a
+    stream, so this was on the hot path.
+
+    `/Videos/{id}` has 3 segments; every playback route has 4+ (the
+    `{item_id}` placeholder never contains a slash — file-scoped ids look
+    like `scene-12-f345`).
+    """
+    pl = (path or "").lower()
+    if "/stream" in pl:
+        return True
+    return pl.startswith("/videos/") and pl.count("/") > 3
+
+
 class RequestLoggingMiddleware:
     """Pure ASGI middleware that doesn't wrap streaming responses."""
 
@@ -52,7 +74,10 @@ class RequestLoggingMiddleware:
             ua = headers.get("user-agent", "")[:40]
             logger.debug(f"→ {scope.get('method', 'GET')} {full_path} [ua={ua}]")
 
-        is_stream = "/stream" in path.lower() or "/Videos/" in path
+        # A request is a *playback* event only when it addresses a
+        # stream/subtitle sub-path; see is_playback_path for why the bare
+        # `/Videos/{id}` metadata document is excluded.
+        is_stream = is_playback_path(path)
 
         # Track stream events at request ARRIVAL, not completion. A long-
         # lived range request for a full scene can hold the connection
@@ -151,6 +176,18 @@ class RequestLoggingMiddleware:
 
         stream_info = _streams._active_streams.get(scene_id)
 
+        # Which file of a merged scene is playing. The dashboard groups by
+        # scene, so this was never recorded — but per-segment resume needs
+        # it: a client can switch source mid-stream, and the progress it
+        # later reports must be attributed to the right file.
+        playing_file_id = ""
+        try:
+            from stash_jellyfin_proxy.util.ids import get_file_id
+            playing_file_id = (get_file_id(path)
+                               or get_file_id(headers.get("x-mediabrowser-sourceid", "") or ""))
+        except Exception:
+            playing_file_id = ""
+
         # File size is needed by should_count_as_new_stream to classify
         # mid-file trailing requests; cache it on the stream record.
         cached_file_size = stream_info.get("file_size", 0) if stream_info else 0
@@ -193,6 +230,7 @@ class RequestLoggingMiddleware:
                     "client_type": client_type,
                     "client_key": client_key,
                     "file_size": cached_file_size,
+                    "file_id": playing_file_id,
                 }
                 _streams._client_streams[client_key] = scene_id
                 logger.info(f"⏸ Stream resuming (post-restart): {title} ({scene_id}) from {client_ip}")
@@ -216,6 +254,7 @@ class RequestLoggingMiddleware:
                     "client_type": client_type,
                     "client_key": client_key,
                     "file_size": file_size,
+                    "file_id": playing_file_id,
                 }
                 _streams._client_streams[client_key] = scene_id
                 _stats.record_play_count(scene_id, title, performer, client_ip, duration)
@@ -226,4 +265,9 @@ class RequestLoggingMiddleware:
             logger.info(f"▶ Stream resumed: {stream_info['title']} ({scene_id}, paused {gap}s)")
         else:
             stream_info["last_seen"] = now
+            if playing_file_id and stream_info.get("file_id") != playing_file_id:
+                # Source switched mid-stream: remember which segment is now
+                # current so the next progress report is attributed to it.
+                stream_info["file_id"] = playing_file_id
+                logger.debug(f"Stream source switched for {scene_id}: file {playing_file_id}")
             logger.debug(f"Stream continue: {scene_id} ({ms}ms)")

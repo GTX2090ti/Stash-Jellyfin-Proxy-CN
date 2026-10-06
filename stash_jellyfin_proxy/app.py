@@ -221,6 +221,9 @@ routes = [
     Route("/Items/{item_id}/Download", endpoint_download),
     Route("/Items/{item_id}/PlaybackInfo", endpoint_playback_info, methods=["GET", "POST"]),
     Route("/Items/{item_id}/Similar", endpoint_similar),
+    # Canonical Jellyfin shape (same precedent as Intros below) — some
+    # clients scope item sub-resources under /Users/{uid}/Items.
+    Route("/Users/{user_id}/Items/{item_id}/Similar", endpoint_similar),
     Route("/Items/{item_id}/Intros", endpoint_intros),
     Route("/Users/{user_id}/Items/{item_id}/Intros", endpoint_intros),
     Route("/Items/{item_id}/SpecialFeatures", endpoint_special_features),
@@ -262,6 +265,19 @@ routes = [
     Route("/Videos/{item_id}/{item_id2}/Subtitles/{subtitle_index}/0/Stream.vtt", endpoint_subtitle),
     Route("/Videos/{item_id}/{item_id2}/Subtitles/{subtitle_index}/Stream.srt", endpoint_subtitle),
     Route("/Videos/{item_id}/{item_id2}/Subtitles/{subtitle_index}/Stream.vtt", endpoint_subtitle),
+    # `GET /Videos/{id}` — the per-video metadata document. Clients fetch
+    # this right before playback and render the in-player version switcher
+    # from its `MediaSources`. It had no route, so it fell through to
+    # `catch_all`, which answers `{"Items": [], "TotalRecordCount": 0}` —
+    # MediaSources came back empty and a merged scene's alternate files
+    # were only selectable from the item detail page, never from inside
+    # the player. Same handler as `/Items/{id}`, which already builds the
+    # full multi-file list via format_jellyfin_item.
+    #
+    # Must stay BELOW every `/Videos/{id}/...` sub-path: Starlette matches
+    # in registration order, and this is the only pattern here that would
+    # otherwise be able to shadow them.
+    Route("/Videos/{item_id}", endpoint_item_details),
     Route("/Items/{item_id}", endpoint_item_details),
     # UpdateItem — write client-edited metadata back into Stash.
     Route("/Items/{item_id}", endpoint_update_item, methods=["POST"]),

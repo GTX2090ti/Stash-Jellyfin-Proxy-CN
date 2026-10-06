@@ -15,6 +15,55 @@
     --error: #f87171;
     --live: #4ade80;
     --restart: #fbbf24;
+    /* Foreground colour for text/icons sitting ON an accent-filled
+       surface (selected chips, primary buttons). Declared here as well as
+       in the light block so the dark default needs no attribute. */
+    --on-accent: #ffffff;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+
+  /* Theme variants.
+     Both are driven purely by custom-property overrides on a root
+     attribute, so every rule in this file keeps working unchanged — no
+     duplicated selectors, no per-theme patches.
+
+     The root `:root` block above IS the dark theme (kept as the default so
+     a browser without JS still gets the established look). `data-theme`
+     then selects an explicit alternative:
+
+       data-theme="dark" — explicit, identical to the :root defaults
+       data-theme="day"  — light palette
+
+     Light palette notes: the accent is darkened so it passes contrast
+     against white (the bright #00a4dc only clears AA on dark backgrounds),
+     and the status colours are deepened for the same reason. `--shadow` is
+     introduced here because dark UI leans on borders rather than shadows;
+     light surfaces need a soft shadow to separate from the page. */
+  html[data-theme="dark"] {
+    color-scheme: dark;
+  }
+
+  html[data-theme="day"] {
+    color-scheme: light;
+    --bg: #f4f6f9;
+    --surface: #ffffff;
+    --surface-2: #f7f9fb;
+    --surface-3: #eef1f5;
+    --border: #d8dee6;
+    --border-hover: #bcc5d1;
+    --text: #1c2430;
+    --text-dim: #55606e;
+    --text-faint: #838d9a;
+    /* #0080b0 — the dark-theme accent darkened to clear 4.5:1 on white */
+    --accent: #0080b0;
+    --accent-dim: #00688f;
+    --success: #15803d;
+    --warning: #a16207;
+    --error: #c62828;
+    --live: #15803d;
+    --restart: #a16207;
+    --on-accent: #ffffff;
+    --shadow: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.04);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -126,9 +175,45 @@
   }
   .lang-switch .lang-opt.active {
     background: var(--accent-dim);
-    color: #fff;
+    color: var(--on-accent);
   }
   .lang-switch .lang-opt:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  /* Theme switcher — same chip pattern as the language switcher. */
+  .theme-switch {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 10px;
+    padding: 3px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .theme-switch .theme-opt {
+    flex: 1;
+    padding: 5px 6px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 11.5px;
+    line-height: 1.4;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .theme-switch .theme-opt:hover {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+  .theme-switch .theme-opt.active {
+    background: var(--accent-dim);
+    color: var(--on-accent);
+  }
+  .theme-switch .theme-opt:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
@@ -219,6 +304,10 @@
     border-radius: 8px;
     margin-bottom: 20px;
     position: relative;
+    /* The token is a near-no-op on dark (which separates via borders) and
+       a soft lift on light, where a white panel on a pale page would
+       otherwise read as flat. */
+    box-shadow: var(--shadow);
   }
   .card-header {
     padding: 14px 20px;
@@ -529,12 +618,52 @@
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
 
+  /* Responsive grids.
+     The Dashboard originally hard-coded its column counts as inline
+     `grid-template-columns` on the wrapper divs, so there was no place to
+     add a breakpoint: on a narrow window the 4-up status cards kept their
+     column count and overflowed, pushing card content out of alignment
+     with the page. Layout now lives here, where a media query can collapse
+     the columns.
+
+     `minmax(0, …)` is load-bearing. A bare `1fr` track has an automatic
+     minimum of min-content, so a wide child (a long title, a
+     non-wrapping value) refuses to shrink and blows the track out. Capping
+     the minimum at 0 lets the child overflow inside the cell instead of
+     widening the column. */
+  .grid-dash { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .grid-five { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+  .grid-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .grid-halves { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-top: 16px; }
+
+  /* Long, unbroken values (paths, ids, titles) must wrap rather than
+     stretch their track. */
+  .grid-dash > *, .grid-halves > *, .grid-five > *, .grid-two > * { min-width: 0; }
+
+  @media (max-width: 1100px) {
+    .grid-dash { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-five { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  @media (max-width: 860px) {
+    .grid-dash { grid-template-columns: minmax(0, 1fr); }
+    .grid-five { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-two { grid-template-columns: minmax(0, 1fr); }
+    .grid-halves { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    /* Stack the sidebar above the content instead of squeezing it. */
+    .app { grid-template-columns: minmax(0, 1fr); }
+    .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+  }
+  @media (max-width: 560px) {
+    .grid-five { grid-template-columns: minmax(0, 1fr); }
+  }
+
   /* Dashboard cards */
   .stat-card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 16px 18px;
+    box-shadow: var(--shadow);
   }
   .stat-label {
     color: var(--text-dim);
@@ -549,11 +678,17 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    /* Flex items default to min-width:auto, so a long value (a big scene
+       count, an error string) refuses to shrink and stretches the grid
+       track instead of wrapping inside it. */
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .stat-sub {
     color: var(--text-faint);
     font-size: 12px;
     margin-top: 4px;
+    overflow-wrap: anywhere;
   }
 
   /* Tables */
@@ -648,12 +783,20 @@
     border-radius: 6px;
     margin-bottom: 8px;
     background: var(--surface-2);
+    box-shadow: var(--shadow);
   }
   .profile-row:hover { border-color: var(--border-hover); }
   .profile-name {
     font-family: "SF Mono", Menlo, monospace;
     font-size: 13px;
     font-weight: 500;
+    /* Long values must wrap rather than widen the flex item. Scene titles
+       in this library are long Japanese strings with no spaces, so an
+       unbreakable run pushes the row out of alignment inside its card.
+       `overflow-wrap: anywhere` permits breaking inside such a run. */
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
   .profile-actions { display: flex; gap: 4px; }
   .icon-btn {

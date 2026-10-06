@@ -2,6 +2,100 @@
 
 > `CN.x` 为本分支自研版本号（倒序在上）；CN.3 起应用内版本号带 `CN.x` 后缀。CN.x 之前为上游（feldorn/Stash-Jellyfin-Proxy）的发布记录。
 
+### v7.3.10-CN.11 —— 播放中切换合并视频的版本（自研）
+
+**现象**：合并场景（Stash Merge，一个 scene 挂多个文件）在 SenPlayer 里
+能看到多个版本，但**只能在详情页手动切**；进入播放后，播放器里没有版本
+切换入口，只能退回详情页重选。
+
+**根因**：`GET /Videos/{id}`（播放前客户端拉取的视频元数据文档）**没有注册
+路由**，落到兜底路由 `catch_all`，返回 `{"Items": [], "TotalRecordCount": 0}`。
+该接口的 `MediaSources` 因此为空 —— 而客户端正是依据 `MediaSources` 数量
+来决定是否渲染播放中的版本切换器。
+
+协议层其实一直是好的，实测均正常：
+
+| 检查项 | 结果 |
+|---|---|
+| `/Items/{id}/PlaybackInfo` 的 `MediaSources` | 4 个（scene-2887 及 3 个 `-f<fileId>`） |
+| 切到非主文件拉流 `Range: bytes=0-1023` | 206 + 正确 `Content-Range` |
+| `/Items/{id}` 的 `MediaSources` | 4 个（走 `format_jellyfin_item`） |
+
+也就是说**只有 `/Videos/{id}` 这条路径缺数据**，是纯粹的路由缺口。
+
+**修复**：把 `/Videos/{item_id}` 指向 `endpoint_item_details`（与
+`/Items/{id}` 同一处理函数，`format_jellyfin_item` 已会生成完整的多文件
+`MediaSources`）。
+
+注册位置有讲究：必须排在**所有** `/Videos/{id}/...` 子路径之后。Starlette
+按注册顺序匹配，虽然段数不同不会真的吞掉 `/Videos/{id}/stream`，但顺序
+语义应当无歧义 —— 已加断言把这条钉死。
+
+**新增** `tests/unit/test_videos_route_versions.py`（7 项）：路由存在性、
+指向正确的处理函数、注册顺序不遮蔽 stream/字幕子路径，以及
+「多文件 → 3 个源」「单文件 → 1 个源」「开关关闭 → 1 个源」三组对照断言，
+外加顶层 `MediaStreams` / `Container` / `VideoType`（SenPlayer 读取）不被
+回归。
+
+**顺带修正**：`build_docker/Dockerfile` 的 `LABEL version` 此前停在
+`CN.7`（代码已是 CN.10），而部署前的镜像新鲜度校验正是读这个 label，
+陈旧 label 会让校验误判镜像身份 —— 一并对齐到 CN.11。
+
+**第二处：新增路由顺带修掉的「误判为播放」缺陷**
+
+日志中间件用 `"/stream" in path or "/Videos/" in path` 判定播放事件，
+用来喂 Web UI 面板的「实时流」表。补上 `/Videos/{id}` 之后，每次
+**元数据**请求都会被当成一次播放开始 —— 面板多出幽灵条目，并且每次
+多打一次 `get_scene_info` 的 Stash 查询（正是客户端播放前必经的一步，
+所以它在热路径上）。
+
+已把判定抽成 `middleware/logging.py::is_playback_path()`，只把真正
+投递媒体的路径（`/Videos/{id}/stream…`、`…/Subtitles/…`）算作播放：
+`/Videos/{id}` 恰好 3 段，播放类路由都是 4 段以上（`{item_id}` 占位符
+本身不含斜杠，文件级 id 形如 `scene-12-f345`）。实测该请求从 22s
+降到 0.01s，线上每个 `/Videos/{id}` 少一次 Stash 往返。
+
+**第三处：Web UI 仪表盘窄屏错位 + 白天/黑暗双主题**
+
+*错位根因（三处，均为实测定位，非推测）：*
+
+1. `index.html` 里有 5 处**内联** `style="grid-template-columns: …"` 把列数
+   写死。内联样式里加不了媒体查询，所以窄窗口下 4 列状态卡被压到内容宽度
+   以下并溢出。
+2. `app.css` 里**一个 `@media` 都没有**（实测 0 个），全站无响应式。
+3. `.profile-name` 没有任何换行/溢出规则。日文标题不含空格，在
+   `min-width: auto` 的 flex 项里撑破容器，把整行顶歪。
+
+*修复：* 布局从 HTML 内联样式移入样式表（这是能加断点的前提），
+新增 `.grid-dash` / `.grid-five` / `.grid-two` / `.grid-halves` 四个类，
+配 3 个断点（1100px 折 2 列、860px 折 1 列并把侧栏改为横向排布、560px 折 1 列）。
+所有轨道使用 `minmax(0, 1fr)` —— 裸 `1fr` 轨道的自动最小值是
+`min-content`，长标题会撑破轨道；容器子项另加 `min-width: 0`，
+`.profile-name` / `.stat-value` 加 `overflow-wrap: anywhere` 允许在任意
+位置断行。实测 430px 视口下 `scrollWidth == clientWidth == 430`（无横向溢出）、
+卡片左对齐且纵向堆叠；1000px 折 2 列。
+
+*双主题：* `:root` 保留为深色默认值（禁用 JS 时仍可读），
+`html[data-theme="day"]` 覆盖浅色。两个必要的配套调整：
+
+- **浅色强调色必须加深**：深色主题的 `--accent: #00a4dc` 在白底上对比度仅
+  约 2.3:1，远低于 WCAG AA 的 4.5:1。改用同色相深色 `#0080b0`；
+  `--success` / `--warning` / `--error` 同样各加深一档。
+- **浅色卡片必须有阴影**：深色 UI 靠边框分层，浅灰底 (`#f4f6f9`) 上的
+  `#fff` 卡片只有边框会显得没有层次。新增 `--shadow` token 并接到
+  `.card` / `.stat-card` / `.profile-row`。
+
+另新增 `--on-accent` 变量，取代切换器激活态里写死的 `color: #fff`。
+JS 侧同步设置 `documentElement.style.colorScheme`，否则浅色页面里的原生
+滚动条与下拉控件仍是深色外观。切换器沿用既有语言切换器的 chip 样式，
+`DAY` / `DARK` 标签不进翻译词条（与 `AUTO` / `中文` / `EN` 同一原则）。
+新增 `ui/static/theme.js`，在 `<head>` 同步加载并于首次绘制前写入
+`data-theme`，避免闪烁；选择存 `localStorage`（键 `sjp.theme`，白名单校验）。
+
+**真机验证**（无头 Edge + CDP，26/26 PASS）：DAY 正文对比度 14.43:1、
+DARK 15.08:1；430px 无横向溢出、卡片左对齐；1000px 折两列；重载后主题保持；
+无页面异常与控制台错误。
+
 ### v7.3.10-CN.10 —— 厂商收藏读侧补齐 + 性能优化（自研）
 
 **一、厂商（Studio）收藏：写入正常但读不出来**

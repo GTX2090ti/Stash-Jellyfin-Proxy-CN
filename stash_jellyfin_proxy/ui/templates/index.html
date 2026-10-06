@@ -10,6 +10,10 @@
          the catalog is loaded before the first dynamic render. -->
     <script>window.SJP_DEFAULT_LANG = "{{UI_LANG}}";</script>
     <script src="/static/i18n.js?v={{ASSET_V}}"></script>
+    <!-- Theme bootstrap. Must come after the stylesheet (it sets data-theme
+         on <html>, which the palette rules key off) and before app.js so the
+         correct palette is applied before the first render. -->
+    <script src="/static/theme.js?v={{ASSET_V}}"></script>
 </head>
 <body>
 
@@ -31,6 +35,14 @@
       <div class="nav-item" data-page="logs"><span class="dot"></span>Logs</div>
     </nav>
     <div class="sidebar-footer">
+      <!-- Theme switcher. Follows the same chip pattern as the language
+           switcher below and, like it, the labels stay out of the
+           translation catalog: "DAY"/"DARK" must read the same in every
+           language. -->
+      <div class="theme-switch" id="theme-switch" role="group" aria-label="Theme">
+        <button type="button" class="theme-opt" data-theme-opt="day" title="Light theme">DAY</button>
+        <button type="button" class="theme-opt" data-theme-opt="dark" title="Dark theme">DARK</button>
+      </div>
       <!-- Language switcher. The chip labels are deliberately NOT in the
            translation catalog: a language picker should read the same in
            every language. Only the tooltips are translated. -->
@@ -65,7 +77,7 @@
       <div class="page-content" id="dashboard-content">
 
         <!-- Row 1: Status cards -->
-        <div class="stat-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
+        <div class="grid-dash">
           <div class="card stat-card" data-stat="proxy">
             <div class="card-body">
               <div class="stat-label">Proxy Status</div>
@@ -97,7 +109,7 @@
         </div>
 
         <!-- Row 2: Active streams + library stats -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
+        <div class="grid-halves">
           <div class="card">
             <div class="card-header">
               <div class="card-title">Active Streams</div>
@@ -113,7 +125,7 @@
               <div style="color: var(--text-dim); font-size: 12px;">Refreshes every 60s</div>
             </div>
             <div class="card-body">
-              <div class="stat-grid" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px;">
+              <div class="grid-five">
                 <div><div class="stat-label">Scenes</div><div class="stat-value" style="font-size: 18px;" id="dash-lib-scenes">—</div></div>
                 <div><div class="stat-label">Performers</div><div class="stat-value" style="font-size: 18px;" id="dash-lib-performers">—</div></div>
                 <div><div class="stat-label">Studios</div><div class="stat-value" style="font-size: 18px;" id="dash-lib-studios">—</div></div>
@@ -125,14 +137,14 @@
         </div>
 
         <!-- Row 3: Proxy usage + top played -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
+        <div class="grid-halves">
           <div class="card">
             <div class="card-header">
               <div class="card-title">Proxy Usage</div>
               <button class="btn" id="dash-reset-stats-btn" style="font-size: 12px;">Reset</button>
             </div>
             <div class="card-body">
-              <div class="stat-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+              <div class="grid-two">
                 <div><div class="stat-label">Streams Today</div><div class="stat-value" style="font-size: 18px;" id="dash-streams-today">—</div></div>
                 <div><div class="stat-label">Total Streams</div><div class="stat-value" style="font-size: 18px;" id="dash-streams-total">—</div></div>
                 <div><div class="stat-label">Auth Success</div><div class="stat-value" style="font-size: 18px;" id="dash-auth-ok">—</div></div>
@@ -480,7 +492,7 @@
         <div class="page-subtitle">Per-client rendering profiles and live User-Agent feed</div>
       </div>
       <div class="page-content" id="players-content">
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+        <div class="grid-halves">
 
           <!-- Connected Players (left) -->
           <div class="card">
