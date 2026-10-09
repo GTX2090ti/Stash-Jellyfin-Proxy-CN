@@ -155,11 +155,78 @@ def test_overview_leads_with_hand_written_bio():
 
 
 def test_overview_summarises_structured_attributes():
-    ov = build_overview(_performer(details=None))
+    # English wording is asserted under an explicit UI_LANGUAGE, not by
+    # accident: the default is now Chinese, so relying on the ambient value
+    # would make this test depend on import order.
+    monkey = runtime.UI_LANGUAGE
+    runtime.UI_LANGUAGE = "en"
+    try:
+        ov = build_overview(_performer(details=None))
+    finally:
+        runtime.UI_LANGUAGE = monkey
     assert "Female performer" in ov
     assert "1996-05-14" in ov
     assert "from Japan" in ov
     assert "12 scenes in library" in ov
+
+
+# --- the Overview is assembled in Python, so i18n.js cannot translate it ---
+#
+# i18n.js rewrites DOM text nodes, but this string arrives already-assembled
+# inside a JSON payload, so the front-end translator never sees it. It has
+# to be localised server-side or a Chinese user gets an English actor card.
+
+def test_overview_is_chinese_under_auto_default():
+    """"auto" must resolve to Chinese, not fall through to English."""
+    monkey = runtime.UI_LANGUAGE
+    runtime.UI_LANGUAGE = "auto"
+    try:
+        ov = build_overview(_performer(details=None))
+    finally:
+        runtime.UI_LANGUAGE = monkey
+    assert "女性演员" in ov
+    assert "Female performer" not in ov
+    assert "来自 Japan" in ov
+    assert "片库中有 12 部作品" in ov
+
+
+def test_overview_is_chinese_under_explicit_zh():
+    monkey = runtime.UI_LANGUAGE
+    runtime.UI_LANGUAGE = "zh"
+    try:
+        ov = build_overview(_performer(details=None))
+    finally:
+        runtime.UI_LANGUAGE = monkey
+    assert "女性演员" in ov
+    assert "身高：" in ov
+    assert "又名：" in ov
+
+
+def test_overview_stays_english_when_ui_language_is_english():
+    monkey = runtime.UI_LANGUAGE
+    runtime.UI_LANGUAGE = "en"
+    try:
+        ov = build_overview(_performer(details=None))
+    finally:
+        runtime.UI_LANGUAGE = monkey
+    assert "Female performer" in ov
+    assert "Height:" in ov
+    assert "Also known as:" in ov
+
+
+def test_chinese_overview_leaves_no_english_scaffolding():
+    """Labels must be localised too, not just the summary sentence."""
+    monkey = runtime.UI_LANGUAGE
+    runtime.UI_LANGUAGE = "zh"
+    try:
+        ov = build_overview(_performer(details=None, tattoos="none",
+                                       piercings="ears"))
+    finally:
+        runtime.UI_LANGUAGE = monkey
+    for english in ("Height:", "Weight:", "Measurements:", "Breasts:",
+                    "Ethnicity:", "Hair:", "Eyes:", "Tattoos:", "Piercings:",
+                    "Also known as:", "in library", "born "):
+        assert english not in ov, f"untranslated fragment: {english}"
 
 
 def test_overview_handles_a_performer_with_nothing_set():
@@ -167,11 +234,16 @@ def test_overview_handles_a_performer_with_nothing_set():
     bare = {"id": "1", "name": "X", "scene_count": 0}
     ov = build_overview(bare)
     assert ov.strip()
-    assert "Performer" in ov
+    assert "演员" in ov
 
 
 def test_overview_includes_measurements_and_aliases():
-    ov = build_overview(_performer())
+    monkey = runtime.UI_LANGUAGE
+    runtime.UI_LANGUAGE = "en"
+    try:
+        ov = build_overview(_performer())
+    finally:
+        runtime.UI_LANGUAGE = monkey
     assert "Height: 150 cm" in ov
     assert "Measurements: B85 W58 H85" in ov
     assert "_alias_" in ov

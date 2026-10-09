@@ -51,6 +51,24 @@ LIST_FIELDS = (
 )
 
 
+def _t(zh: str, en: str) -> str:
+    """Pick the UI language for server-generated prose.
+
+    This Overview is synthesised in Python, so the front-end translator in
+    i18n.js can never see it — it rewrites DOM text nodes, and this string
+    arrives already-assembled in a JSON payload. It therefore has to be
+    localised here, or a Chinese user gets an English actor card.
+
+    "auto" resolves to Chinese rather than falling back to English: this
+    proxy is operated by a Chinese user, and the language switcher in the
+    sidebar still overrides the choice at runtime for anyone who wants
+    English.
+    """
+    from stash_jellyfin_proxy import runtime
+    pref = str(getattr(runtime, "UI_LANGUAGE", "auto") or "auto").lower()
+    return en if pref.startswith("en") else zh
+
+
 def _age_from(birthdate: str) -> Optional[int]:
     try:
         import datetime as _dt
@@ -72,68 +90,84 @@ def build_overview(performer: Dict[str, Any]) -> str:
     bits: List[str] = []
     gender = (performer.get("gender") or "").lower()
     if gender == "female":
-        bits.append("Female performer")
+        bits.append(_t("女性演员", "Female performer"))
     elif gender == "male":
-        bits.append("Male performer")
+        bits.append(_t("男性演员", "Male performer"))
     elif gender:
-        bits.append(gender.replace("_", " ").capitalize() + " performer")
+        label = gender.replace("_", " ").capitalize()
+        bits.append(_t(label + "演员", label + " performer"))
     else:
-        bits.append("Performer")
+        bits.append(_t("演员", "Performer"))
 
     bd = performer.get("birthdate")
     if bd:
         if performer.get("death_date"):
-            bits[-1] += f", born {bd}"
+            bits[-1] += _t(f"，生于 {bd}", f", born {bd}")
         else:
             age = _age_from(bd)
-            bits[-1] += f", born {bd} ({age})" if age is not None else f", born {bd}"
+            bits[-1] += (_t(f"，生于 {bd}（{age} 岁）", f", born {bd} ({age})")
+                     if age is not None else _t(f"，生于 {bd}", f", born {bd}"))
 
     if performer.get("country"):
-        bits.append(f"from {performer['country']}")
+        bits.append(_t(f"来自 {performer['country']}", f"from {performer['country']}"))
 
     c_start, c_end = performer.get("career_start"), performer.get("career_end")
     if c_start and c_end and c_start != c_end:
-        bits.append(f"active {c_start}–{c_end}")
+        bits.append(_t(f"活跃于 {c_start}–{c_end}", f"active {c_start}–{c_end}"))
     elif c_start:
-        bits.append(f"active since {c_start}")
+        bits.append(_t(f"{c_start} 年起活跃", f"active since {c_start}"))
 
     scene_count = int(performer.get("scene_count") or 0)
     if scene_count:
-        bits.append(f"{scene_count} scene{'s' if scene_count != 1 else ''} in library")
+        bits.append(_t(f"片库中有 {scene_count} 部作品",
+                       f"{scene_count} scene{'s' if scene_count != 1 else ''} in library"))
 
-    parts = [", ".join(bits) + "."]
+    # Chinese joins with a full-width comma and no trailing space; English
+    # keeps ", " and the full stop.
+    zh = _t("z", "e") == "z"
+    parts = ["，".join(bits) + "。" if zh else ", ".join(bits) + "."]
 
     phys: List[str] = []
     if performer.get("height_cm"):
         cm = int(performer["height_cm"])
         inches = round(cm / 2.54)
-        phys.append(f"Height: {cm} cm ({inches // 12}'{inches % 12}\")")
+        phys.append(_t(f"身高：{cm} cm（{inches // 12} 尺 {inches % 12} 英寸）",
+                       f"Height: {cm} cm ({inches // 12}'{inches % 12}\")"))
     if performer.get("weight"):
-        phys.append(f"Weight: {performer['weight']} kg")
+        phys.append(_t(f"体重：{performer['weight']} kg",
+                       f"Weight: {performer['weight']} kg"))
     if performer.get("measurements"):
-        phys.append(f"Measurements: {performer['measurements']}")
+        phys.append(_t(f"三围：{performer['measurements']}",
+                       f"Measurements: {performer['measurements']}"))
     if performer.get("fake_tits"):
-        phys.append(f"Breasts: {performer['fake_tits']}")
+        phys.append(_t(f"胸部：{performer['fake_tits']}",
+                       f"Breasts: {performer['fake_tits']}"))
     if performer.get("ethnicity"):
-        phys.append(f"Ethnicity: {performer['ethnicity']}")
+        phys.append(_t(f"族裔：{performer['ethnicity']}",
+                       f"Ethnicity: {performer['ethnicity']}"))
     if performer.get("hair_color"):
-        phys.append(f"Hair: {performer['hair_color']}")
+        phys.append(_t(f"发色：{performer['hair_color']}",
+                       f"Hair: {performer['hair_color']}"))
     if performer.get("eye_color"):
-        phys.append(f"Eyes: {performer['eye_color']}")
+        phys.append(_t(f"瞳色：{performer['eye_color']}",
+                       f"Eyes: {performer['eye_color']}"))
     if phys:
         parts.append("\n".join(phys))
 
     mods: List[str] = []
     if performer.get("tattoos"):
-        mods.append(f"Tattoos: {performer['tattoos']}")
+        mods.append(_t(f"纹身：{performer['tattoos']}",
+                        f"Tattoos: {performer['tattoos']}"))
     if performer.get("piercings"):
-        mods.append(f"Piercings: {performer['piercings']}")
+        mods.append(_t(f"穿孔：{performer['piercings']}",
+                        f"Piercings: {performer['piercings']}"))
     if mods:
         parts.append("\n".join(mods))
 
     aliases = [a for a in (performer.get("alias_list") or []) if a]
     if aliases:
-        parts.append(f"Also known as: {', '.join(aliases)}")
+        parts.append(_t("又名：" + "、".join(aliases),
+                          "Also known as: " + ", ".join(aliases)))
 
     if performer.get("details"):
         parts.insert(0, performer["details"].strip())

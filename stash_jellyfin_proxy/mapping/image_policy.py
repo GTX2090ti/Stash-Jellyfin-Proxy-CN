@@ -22,11 +22,24 @@ def performer_item_type(request) -> str:
 
 
 def studio_item_type(request) -> str:
-    """Return the Jellyfin Type string for studio items (Studio/BoxSet).
+    """Return the Jellyfin Type string for studio items.
 
     "Studio" for clients that misroute BoxSet-typed studios into their
-    Collections view (SenPlayer/Yamby); compat "BoxSet" for the rest."""
+    Collections view (SenPlayer); "BoxSet" for the rest; "CollectionFolder"
+    for clients that only navigate a container once it looks like a library
+    (Yamby types the tap target by CollectionType)."""
     return resolve_from_request(request).studio_type
+
+
+def studio_collection_type(studio_type: str):
+    """Return the CollectionType a studio item of this Type must carry.
+
+    Jellyfin clients decide whether a tapped item is *browsable* from the
+    pair (Type, CollectionType): BoxSet/CollectionFolder items without a
+    CollectionType are rendered as a detail page with artwork only, and the
+    client never asks for children. The native "Studio" kind must stay
+    CollectionType-less so it keeps its plain detail rendering."""
+    return "movies" if studio_type in ("BoxSet", "CollectionFolder") else None
 
 
 def playlist_collection_type(request) -> str:

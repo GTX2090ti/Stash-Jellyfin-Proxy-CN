@@ -30,7 +30,16 @@ def _req(path_params=None, qs: bytes = b"") -> Request:
 
 @pytest.fixture
 def fake_stash(monkeypatch):
-    """Record Stash queries; answer the count + page queries."""
+    """Record Stash queries; answer the count + page queries.
+
+    `similar_items_for` fetches the count and the page through
+    `stash_query_pair` (one round trip for both, added with the CN.10
+    parallel-query work). Patch BOTH entry points: leaving
+    `stash_query_pair` unpatched sends the real client at the configured
+    Stash host, which shows up as `getaddrinfo failed` after four retries
+    and an empty call list — the assertions then fail for what looks like
+    an endpoint bug but is really an un-stubbed dependency.
+    """
     calls = []
 
     async def _fake(query, variables=None):
@@ -44,7 +53,13 @@ def fake_stash(monkeypatch):
              "files": [], "performers": [], "tags": []},
         ]}}}
 
+    async def _fake_pair(count_query, count_vars, page_query, page_vars):
+        count = await _fake(count_query, count_vars)
+        page = await _fake(page_query, page_vars)
+        return count, page
+
     monkeypatch.setattr(items_mod, "stash_query", _fake)
+    monkeypatch.setattr(items_mod, "stash_query_pair", _fake_pair)
     return calls
 
 
@@ -99,3 +114,21 @@ def test_endpoint_keeps_scene_similar_empty(fake_stash):
     resp = asyncio.run(stubs_mod.endpoint_similar(req))
     import json
     assert json.loads(resp.body) == {"Items": [], "TotalRecordCount": 0, "StartIndex": 0}
+
+
+def test_endpoint_widens_client_limit_for_containers(fake_stash):
+    """Yamby always asks /Similar with Limit=10; for containers the endpoint
+    must widen the page (SIMILAR_CONTAINER_PAGE_LIMIT) so the rail carries
+    the full studio catalogue, not just the first 10 scenes."""
+    req = _req({"item_id": "studio-30"}, b"Limit=10&UserId=abc&EnableTotalRecordCount=false")
+    asyncio.run(stubs_mod.endpoint_similar(req))
+    per_page = [v["per_page"] for _, v in fake_stash if "per_page" in v]
+    assert per_page == [stubs_mod.SIMILAR_CONTAINER_PAGE_LIMIT]
+
+
+def test_container_page_limit_fits_max_page_size():
+    """similar_items_for clamps to runtime.MAX_PAGE_SIZE; widening beyond it
+    would silently shrink back."""
+    from stash_jellyfin_proxy import runtime
+
+    assert stubs_mod.SIMILAR_CONTAINER_PAGE_LIMIT <= runtime.MAX_PAGE_SIZE

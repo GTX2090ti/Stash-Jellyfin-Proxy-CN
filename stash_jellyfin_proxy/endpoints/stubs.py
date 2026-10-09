@@ -16,6 +16,11 @@ from stash_jellyfin_proxy.stash.client import _get_async_client
 
 logger = logging.getLogger("stash-jellyfin-proxy")
 
+# Yamby renders a studio/performer/group page exclusively from /Similar and
+# always requests it with Limit=10. Serve a wide page for containers so the
+# rail carries the full catalogue instead of the first 10 scenes.
+SIMILAR_CONTAINER_PAGE_LIMIT = 200
+
 
 # --- Health / identity probes ---
 
@@ -126,10 +131,14 @@ async def endpoint_similar(request):
     """`GET /Items/{id}/Similar` — items belonging to / related to `item_id`.
 
     Container-like proxy ids (studio-/performer-/group-/tagitem-) return the
-    scenes they own. Yamby builds a studio page from this rail, so the old
-    always-empty stub made every studio page look empty while the same
-    studio opened via the collection path listed its scenes. Scene ids keep
-    the empty response — Stash has no similar-scene relation.
+    scenes they own. Yamby builds a studio page from this rail and — for every
+    container Type we tried (Studio/Folder/BoxSet/CollectionFolder/Genre) —
+    never issues a children query (`Items?ParentId=...`); /Similar is the ONLY
+    rail it fills. It always asks with `Limit=10`, so the rail showed just 10
+    items. For containers we therefore ignore the client Limit and serve a
+    wide page (honoring StartIndex) so the rail carries the studio's full
+    catalogue. Scene ids keep the empty response — Stash has no
+    similar-scene relation.
     """
     item_id = request.path_params.get("item_id", "") or ""
     if item_id.startswith(("studio-", "performer-", "group-", "tagitem-")):
@@ -147,6 +156,7 @@ async def endpoint_similar(request):
 
         limit = _int_param("Limit", "limit", default=20)
         start_index = _int_param("StartIndex", "startIndex", default=0)
+        limit = max(limit, SIMILAR_CONTAINER_PAGE_LIMIT)
         try:
             return JSONResponse(await similar_items_for(item_id, limit, start_index))
         except Exception as e:

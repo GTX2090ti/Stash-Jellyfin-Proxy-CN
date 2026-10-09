@@ -2,6 +2,22 @@
 
 > `CN.x` 为本分支自研版本号（倒序在上）；CN.3 起应用内版本号带 `CN.x` 后缀。CN.x 之前为上游（feldorn/Stash-Jellyfin-Proxy）的发布记录。
 
+### v7.3.10-CN.12 —— 厂商详情 500 修复 + Yamby 厂商页宽轨 + 演员卡中文化（自研）
+
+**修复（500）**：SenPlayer/客户端点厂商（studio）详情
+`/Users/{uid}/Items/studio-XX` 全部 500——CN.11 提交的 `items.py` 三处引用
+`studio_collection_type`，但定义该函数的 `mapping/image_policy.py` 改动
+漏提交，GHCR 镜像内 import 失败（半截推送）。本次补上定义；
+`test_studio_collection_type.py`（5 例）与相关单测 44 例全过，
+已在 180 NAS 热补丁 + 重启真机验证：错误流归零。
+
+**Yamby 厂商/演员页宽轨**：Yamby 对容器型条目只靠 `/Items/{id}/Similar`
+填内容轨且固定 `Limit=10`，厂商页只显示 10 个场景。容器型 id 忽略客户端
+Limit，服务 `SIMILAR_CONTAINER_PAGE_LIMIT = 200` 宽页（StartIndex 仍生效）。
+
+**演员卡中文化**：服务端合成的演员 Overview 在 JSON 里已是成品字符串，
+前端 i18n.js 改不到——改为按 `UI_LANGUAGE` 在 Python 侧本地化（auto=中文）。
+
 ### v7.3.10-CN.11 —— 播放中切换合并视频的版本（自研）
 
 **现象**：合并场景（Stash Merge，一个 scene 挂多个文件）在 SenPlayer 里
