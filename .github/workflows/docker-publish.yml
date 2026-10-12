@@ -46,6 +46,9 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=7.3.10,enable={{is_default_branch}}
+            # CN release train: e.g. 7.3.10-CN.13, read from the package's
+            # single source of truth so each push tags its own CN version.
+            type=raw,value=${{ steps.appver.outputs.version }},enable={{is_default_branch}}
           # Without an explicit `labels`, metadata-action emits its own
           # org.opencontainers.* set, and build-push-action's `labels:`
           # below OVERRIDES the Dockerfile's — so `LABEL version` in the
