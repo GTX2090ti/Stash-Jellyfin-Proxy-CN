@@ -499,8 +499,8 @@ def _playlist_item(tag: dict, item_type: str = "Playlist") -> dict:
         "ChildCount": int(tag.get("scene_count") or 0),
         "RecursiveItemCount": int(tag.get("scene_count") or 0),
         "PrimaryImageAspectRatio": 0.6667,
-        "ImageTags": {"Primary": "img"},
-        "ImageBlurHashes": {"Primary": {"img": "000000"}},
+        "ImageTags": {"Primary": runtime.IMAGE_TAG},
+        "ImageBlurHashes": {"Primary": {runtime.IMAGE_TAG: "000000"}},
         "BackdropImageTags": [],
     }
     if item_type == "Playlist":

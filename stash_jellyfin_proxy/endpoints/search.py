@@ -255,8 +255,8 @@ async def endpoint_genres(request):
             items = [
                 {"Name": name, "Id": f"genre-{tid}", "ServerId": runtime.SERVER_ID,
                  "Type": "Genre",
-                 "ImageTags": {"Primary": "img"},
-                 "ImageBlurHashes": {"Primary": {"img": "000000"}},
+                 "ImageTags": {"Primary": runtime.IMAGE_TAG},
+                 "ImageBlurHashes": {"Primary": {runtime.IMAGE_TAG: "000000"}},
                  "BackdropImageTags": []}
                 for tid, name in sorted(seen.items(), key=lambda x: x[1])
             ]
@@ -271,8 +271,8 @@ async def endpoint_genres(request):
             items = [
                 {"Name": t["name"], "Id": f"genre-{t['id']}", "ServerId": runtime.SERVER_ID,
                  "Type": "Genre",
-                 "ImageTags": {"Primary": "img"},
-                 "ImageBlurHashes": {"Primary": {"img": "000000"}},
+                 "ImageTags": {"Primary": runtime.IMAGE_TAG},
+                 "ImageBlurHashes": {"Primary": {runtime.IMAGE_TAG: "000000"}},
                  "BackdropImageTags": []}
                 for t in tags if t.get("scene_count", 0) > 0
             ]
@@ -402,8 +402,8 @@ async def endpoint_studios(request):
             items = [
                 {"Name": s["name"], "Id": f"studio-{s['id']}", "ServerId": runtime.SERVER_ID,
                  "Type": "Studio",
-                 "ImageTags": {"Primary": "img"},
-                 "ImageBlurHashes": {"Primary": {"img": "000000"}},
+                 "ImageTags": {"Primary": runtime.IMAGE_TAG},
+                 "ImageBlurHashes": {"Primary": {runtime.IMAGE_TAG: "000000"}},
                  "BackdropImageTags": []}
                 for s in sorted(seen.values(), key=lambda x: x["name"])
             ]
@@ -432,8 +432,8 @@ async def endpoint_studios(request):
         items = [
             {"Name": s["name"], "Id": f"studio-{s['id']}", "ServerId": runtime.SERVER_ID,
              "Type": "Studio",
-             "ImageTags": {"Primary": "img"},
-             "ImageBlurHashes": {"Primary": {"img": "000000"}},
+             "ImageTags": {"Primary": runtime.IMAGE_TAG},
+             "ImageBlurHashes": {"Primary": {runtime.IMAGE_TAG: "000000"}},
              "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0,
                           "IsFavorite": bool(s.get("favorite")), "Played": False,
                           "Key": f"studio-{s['id']}"},
@@ -500,8 +500,8 @@ async def endpoint_search_hints(request):
                     "Type": "Movie",
                     "MediaType": "Video",
                     "RunTimeTicks": int(duration * 10000000),
-                    "PrimaryImageTag": "img",
-                    "ImageTag": "img",
+                    "PrimaryImageTag": runtime.IMAGE_TAG,
+                    "ImageTag": runtime.IMAGE_TAG,
                 }
                 date = s.get("date")
                 if date:
@@ -528,7 +528,7 @@ async def endpoint_search_hints(request):
                     "MediaType": "",
                 }
                 if p.get("image_path"):
-                    hint["PrimaryImageTag"] = "img"
+                    hint["PrimaryImageTag"] = runtime.IMAGE_TAG
                 hints.append(hint)
     except Exception as e:
         logger.error(f"Search hints error: {e}")

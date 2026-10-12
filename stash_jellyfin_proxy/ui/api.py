@@ -8,6 +8,7 @@ names on save); every other handler is read-only or side-effects
 through dedicated helpers (cache clear, stats reset, profile rewrite).
 """
 import asyncio
+import hashlib
 import logging
 import os
 import time
@@ -176,8 +177,15 @@ async def ui_api_stats_reset(request):
 
 
 async def ui_api_clear_cache(request):
-    """Clear in-memory caches: image bytes, library-card artwork, genre
-    allow-list, filter-panel cache. Everything rebuilds on next request."""
+    """Clear in-memory caches AND rotate the global ImageTag.
+
+    Native Jellyfin clients cache artwork by (ItemId, ImageTag) and ignore
+    HTTP Cache-Control, so clearing the byte cache alone would not refresh
+    what the players display. Rotating runtime.IMAGE_TAG to a fresh value
+    makes every client re-fetch every poster on its next poll — the same
+    effect a proxy restart used to have, without the restart.
+
+    Everything rebuilds on next request."""
     if request.method != "POST":
         return JSONResponse({"error": "Method not allowed"}, status_code=405)
     cleared = []
@@ -210,8 +218,11 @@ async def ui_api_clear_cache(request):
         cleared.append("series_scene_cache")
     except Exception:
         pass
-    logger.info(f"Cache cleared via Web UI: {', '.join(cleared)}")
-    return JSONResponse({"success": True, "cleared": cleared})
+    # Rotate the ImageTag so clients drop their cached artwork and re-fetch.
+    new_tag = hashlib.md5(f"img-rot:{time.time_ns()}".encode()).hexdigest()[:16]
+    runtime.IMAGE_TAG = new_tag
+    logger.info(f"Cache cleared via Web UI: {', '.join(cleared)}; ImageTag rotated to {new_tag}")
+    return JSONResponse({"success": True, "cleared": cleared, "imageTag": new_tag})
 
 
 async def ui_api_download_config(request):

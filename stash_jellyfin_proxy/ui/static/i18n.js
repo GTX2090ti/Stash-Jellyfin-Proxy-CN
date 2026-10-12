@@ -493,6 +493,7 @@
     "Statistics reset.": "统计已重置。",
     "Cache cleared: {v}": "缓存已清理：{v}",
     "Clear cache failed: {e}": "清理缓存失败：{e}",
+    "ImageTag {v}": "图片标记 {v}",
     "Downloaded {f}.": "已下载 {f}。",
     "Download failed: {e}": "下载失败：{e}",
     "Config load failed: {e}": "配置加载失败：{e}",

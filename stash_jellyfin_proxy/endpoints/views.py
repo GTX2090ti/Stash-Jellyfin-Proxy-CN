@@ -121,10 +121,12 @@ def _library_image_tag(lib_id: str) -> str:
     ignore HTTP Cache-Control for image bodies. A static string like
     "icon" means the client caches whatever it sees first forever,
     across server restarts and config changes. Mix the library id with
-    a per-startup salt so every restart rotates the tag and clients
-    pull fresh artwork. Within one startup the tag is stable so the
-    same tile isn't refetched on every Home-screen poll."""
-    salt = int(runtime.PROXY_START_TIME or 0)
+    the process-global IMAGE_TAG so the tile follows the Web UI's Clear
+    Cache rotation (and changes across restarts too): the same rotation
+    that refreshes every poster also refreshes library tiles without
+    touching the client's settings. Within one tag value the tile is
+    stable, so the same tile isn't refetched on every Home-screen poll."""
+    salt = runtime.IMAGE_TAG or str(int(runtime.PROXY_START_TIME or 0))
     return hashlib.md5(f"{lib_id}:{salt}".encode()).hexdigest()[:16]
 
 
@@ -493,9 +495,9 @@ async def endpoint_shows_seasons(request):
             "IndexNumber": season_num,
             "ChildCount": seasons_seen[season_num],
             "RecursiveItemCount": seasons_seen[season_num],
-            "ImageTags": {"Primary": "img"},
-            "ImageBlurHashes": {"Primary": {"img": "000000"}, "Backdrop": {"img": "000000"}},
-            "BackdropImageTags": ["img"],
+            "ImageTags": {"Primary": runtime.IMAGE_TAG},
+            "ImageBlurHashes": {"Primary": {runtime.IMAGE_TAG: "000000"}, "Backdrop": {runtime.IMAGE_TAG: "000000"}},
+            "BackdropImageTags": [runtime.IMAGE_TAG],
             "UserData": {
                 "PlaybackPositionTicks": 0, "PlayCount": 0,
                 "IsFavorite": False, "Played": False,
@@ -672,8 +674,8 @@ async def endpoint_latest_items(request):
                     "Key": f"performer-{p['id']}",
                 },
             }
-            item["ImageTags"] = {"Primary": "img"} if p.get("image_path") else {}
-            item["ImageBlurHashes"] = {"Primary": {"img": "000000"}} if p.get("image_path") else {}
+            item["ImageTags"] = {"Primary": runtime.IMAGE_TAG} if p.get("image_path") else {}
+            item["ImageBlurHashes"] = {"Primary": {runtime.IMAGE_TAG: "000000"}} if p.get("image_path") else {}
             items.append(item)
 
     elif parent_id == "root-studios":
@@ -706,8 +708,8 @@ async def endpoint_latest_items(request):
             }
             if stype == "BoxSet":
                 item["CollectionType"] = "movies"
-            item["ImageTags"] = {"Primary": "img"} if s.get("image_path") else {}
-            item["ImageBlurHashes"] = {"Primary": {"img": "000000"}} if s.get("image_path") else {}
+            item["ImageTags"] = {"Primary": runtime.IMAGE_TAG} if s.get("image_path") else {}
+            item["ImageBlurHashes"] = {"Primary": {runtime.IMAGE_TAG: "000000"}} if s.get("image_path") else {}
             items.append(item)
 
     elif parent_id == "root-groups":
@@ -726,8 +728,8 @@ async def endpoint_latest_items(request):
                 "IsFolder": True,
                 "CollectionType": "movies",
                 "ChildCount": m.get("scene_count", 0),
-                "ImageTags": {"Primary": "img"},
-                "ImageBlurHashes": {"Primary": {"img": "000000"}},
+                "ImageTags": {"Primary": runtime.IMAGE_TAG},
+                "ImageBlurHashes": {"Primary": {runtime.IMAGE_TAG: "000000"}},
                 "PrimaryImageAspectRatio": 0.6667,
                 "BackdropImageTags": [],
                 "UserData": {

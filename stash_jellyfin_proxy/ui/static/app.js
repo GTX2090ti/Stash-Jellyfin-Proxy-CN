@@ -1029,7 +1029,9 @@ window.init_system = async function () {
   qs("#sys-clearcache-btn").addEventListener("click", async () => {
     try {
       const res = await apiPost("/api/cache/clear", {});
-      toast(t("Cache cleared: {v}", { v: (res.cleared || []).join(", ") }), "success");
+      const v = (res.cleared || []).join(", ");
+      const imgTag = res.imageTag ? ` · ${t("ImageTag {v}", { v: res.imageTag })}` : "";
+      toast(t("Cache cleared: {v}", { v: v + imgTag }), "success");
     } catch (e) {
       toast(t("Clear cache failed: {e}", { e: e.message }), "error");
     }

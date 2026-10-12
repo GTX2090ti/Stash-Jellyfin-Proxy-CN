@@ -197,13 +197,13 @@ def performer_fields(performer: Dict[str, Any], item_id: str,
         "ServerId": runtime.SERVER_ID,
         "Type": item_type,
         "IsFolder": True,
-        "ImageTags": {"Primary": "img"} if has_image else {},
-        "ImageBlurHashes": ({"Primary": {"img": "000000"}, "Backdrop": {"img": "000000"}}
+        "ImageTags": {"Primary": runtime.IMAGE_TAG} if has_image else {},
+        "ImageBlurHashes": ({"Primary": {runtime.IMAGE_TAG: "000000"}, "Backdrop": {runtime.IMAGE_TAG: "000000"}}
                             if has_image else {}),
         "PrimaryImageAspectRatio": 0.6667,
         # Swiftfin's performer page fires a backdrop request only when this
         # is non-empty.
-        "BackdropImageTags": ["img"] if has_image else [],
+        "BackdropImageTags": [runtime.IMAGE_TAG] if has_image else [],
         "ChildCount": scene_count,
         "RecursiveItemCount": scene_count,
         "Overview": build_overview(performer),

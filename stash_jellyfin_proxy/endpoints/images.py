@@ -434,10 +434,13 @@ async def endpoint_image(request):
     else:
         format_key = "portrait" if needs_portrait_resize else "original"
     cache_key = (item_id, format_key)
+    ttl_seconds = float(runtime.IMAGE_CACHE_TTL_HOURS or 0) * 3600
     if cache_key in runtime.IMAGE_CACHE:
-        cached_data, cached_type = runtime.IMAGE_CACHE[cache_key]
-        logger.debug(f"Cache hit for {item_id}")
-        return _image_response(request, cached_data, cached_type)
+        cached_exp, cached_data, cached_type = runtime.IMAGE_CACHE[cache_key]
+        if cached_exp > time.monotonic():
+            logger.debug(f"Cache hit for {item_id}")
+            return _image_response(request, cached_data, cached_type)
+        del runtime.IMAGE_CACHE[cache_key]
 
     image_headers = {"ApiKey": runtime.STASH_API_KEY} if runtime.STASH_API_KEY else {}
 
@@ -458,7 +461,8 @@ async def endpoint_image(request):
         except Exception:
             pass
         img_data, ct = generate_text_icon(name or iid)
-        runtime.IMAGE_CACHE[cache_key] = (img_data, ct)
+        if ttl_seconds > 0:
+            runtime.IMAGE_CACHE[cache_key] = (time.monotonic() + ttl_seconds, img_data, ct)
         return img_data, ct
 
     async def _parent_studio_logo(studio_numeric_id: str):
@@ -621,7 +625,8 @@ async def endpoint_image(request):
             if len(runtime.IMAGE_CACHE) >= runtime.IMAGE_CACHE_MAX_SIZE:
                 oldest_key = next(iter(runtime.IMAGE_CACHE))
                 del runtime.IMAGE_CACHE[oldest_key]
-            runtime.IMAGE_CACHE[cache_key] = (data, content_type)
+            if ttl_seconds > 0:
+                runtime.IMAGE_CACHE[cache_key] = (time.monotonic() + ttl_seconds, data, content_type)
         elif is_landscape_type and runtime.ENABLE_IMAGE_RESIZE and PILLOW_AVAILABLE:
             # Landscape target (Backdrop, Thumb, landscape tile). Route through
             # fit_to_landscape so portrait phone-video screenshots don't get
@@ -634,7 +639,8 @@ async def endpoint_image(request):
             if len(runtime.IMAGE_CACHE) >= runtime.IMAGE_CACHE_MAX_SIZE:
                 oldest_key = next(iter(runtime.IMAGE_CACHE))
                 del runtime.IMAGE_CACHE[oldest_key]
-            runtime.IMAGE_CACHE[cache_key] = (data, content_type)
+            if ttl_seconds > 0:
+                runtime.IMAGE_CACHE[cache_key] = (time.monotonic() + ttl_seconds, data, content_type)
 
         logger.debug(f"Image response: {len(data)} bytes, type={content_type}")
         return _image_response(request, data, content_type)

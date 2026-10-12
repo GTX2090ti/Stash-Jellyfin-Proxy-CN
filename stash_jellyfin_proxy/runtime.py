@@ -129,6 +129,12 @@ SCRAPE_STASHBOX_ENABLED: bool = True
 DEFAULT_PAGE_SIZE: int = 50
 MAX_PAGE_SIZE: int = 200
 IMAGE_CACHE_MAX_SIZE: int = 100
+# TTL for the in-memory image byte cache, in hours. After this long the
+# cached (possibly resized) bytes are considered stale and the image
+# endpoint re-fetches from Stash on the next request, so client-facing
+# artwork can't stay frozen forever after a Stash-side re-scrape. 0/负值
+# disables the byte cache entirely (every request re-fetches from Stash).
+IMAGE_CACHE_TTL_HOURS: float = 24.0
 
 # --- Logging ---
 LOG_DIR: str = "."
@@ -190,7 +196,20 @@ MIGRATION_PERFORMED: bool = False
 MIGRATION_LOG: List[str] = []
 
 # --- Image byte cache (Pillow output keyed by (item_id, size)) ---
+# Entry shape: (expires_at_monotonic, bytes, content_type). Set TTL to 0
+# via IMAGE_CACHE_TTL_HOURS to disable.
 IMAGE_CACHE: Dict[Any, Any] = {}
+
+# Global ImageTag value served on every item's ImageTags.Primary (and the
+# matching ImageBlurHashes key / BackdropImageTags). Native Jellyfin
+# clients cache images by (ItemId, ImageTag) and ignore HTTP Cache-Control,
+# so the ONLY way to force a client-wide artwork refresh is to change this
+# value. Started as "img" (the historical constant) so existing client
+# caches stay valid across the upgrade; the Web UI's "Clear Cache" action
+# rotates it to a fresh random value, refreshing every poster without a
+# proxy restart. Media-library tiles derive their per-library tag from this
+# value as well (see endpoints/views.py `_library_image_tag`).
+IMAGE_TAG: str = "img"
 
 # --- scene_id → is_series_scene (bool). Populated by the image endpoint
 # when resolving Episode vs Movie poster format. Cleared on config reload.

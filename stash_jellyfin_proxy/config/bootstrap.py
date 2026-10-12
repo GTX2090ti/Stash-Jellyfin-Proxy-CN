@@ -94,6 +94,7 @@ def run_bootstrap(config_file: str, local_config_file: str) -> None:
     LOG_MAX_SIZE_MB = 10
     LOG_BACKUP_COUNT = 3
     IMAGE_CACHE_MAX_SIZE = 100
+    IMAGE_CACHE_TTL_HOURS = 24.0
     BANNED_IPS = set()
     BAN_THRESHOLD = 10
     BAN_WINDOW_MINUTES = 15
@@ -212,6 +213,11 @@ def run_bootstrap(config_file: str, local_config_file: str) -> None:
             REQUIRE_AUTH_FOR_CONFIG = parse_bool(cfg.get("REQUIRE_AUTH_FOR_CONFIG"), REQUIRE_AUTH_FOR_CONFIG)
         if "IMAGE_CACHE_MAX_SIZE" in cfg:
             IMAGE_CACHE_MAX_SIZE = int(cfg.get("IMAGE_CACHE_MAX_SIZE", 100))
+        if "IMAGE_CACHE_TTL_HOURS" in cfg:
+            try:
+                IMAGE_CACHE_TTL_HOURS = float(cfg.get("IMAGE_CACHE_TTL_HOURS", 24))
+            except ValueError:
+                pass
         if "STASH_TIMEOUT" in cfg:
             STASH_TIMEOUT = int(cfg.get("STASH_TIMEOUT", STASH_TIMEOUT))
         if "STASH_RETRIES" in cfg:
@@ -361,6 +367,12 @@ def run_bootstrap(config_file: str, local_config_file: str) -> None:
     if os.getenv("LIBRARY_PATH_MAP"):
         LIBRARY_PATH_MAP = os.getenv("LIBRARY_PATH_MAP", "").strip()
         env_overrides.append("LIBRARY_PATH_MAP")
+    if os.getenv("IMAGE_CACHE_TTL_HOURS"):
+        try:
+            IMAGE_CACHE_TTL_HOURS = float(os.getenv("IMAGE_CACHE_TTL_HOURS"))
+            env_overrides.append("IMAGE_CACHE_TTL_HOURS")
+        except ValueError:
+            pass
 
     if env_overrides:
         print(f"  Env overrides: {', '.join(env_overrides)}")
@@ -405,6 +417,7 @@ def run_bootstrap(config_file: str, local_config_file: str) -> None:
     if MULTI_FILE_SCENES:
         print(f"  Multi-file scenes: enabled (library path map: {LIBRARY_PATH_MAP or 'UNSET — non-primary files will fall back to the Stash stream'})")
     print(f"  Config UI language: {UI_LANGUAGE}")
+    print(f"  Image cache: max={IMAGE_CACHE_MAX_SIZE} entries, TTL={IMAGE_CACHE_TTL_HOURS}h (ImageTag rotation via Web UI Clear Cache)")
 
     # ---- Load player profiles from [player.*] sections ----
     from stash_jellyfin_proxy.players.profiles import load_profiles
@@ -556,6 +569,7 @@ def run_bootstrap(config_file: str, local_config_file: str) -> None:
         DEFAULT_PAGE_SIZE=DEFAULT_PAGE_SIZE,
         MAX_PAGE_SIZE=MAX_PAGE_SIZE,
         IMAGE_CACHE_MAX_SIZE=IMAGE_CACHE_MAX_SIZE,
+        IMAGE_CACHE_TTL_HOURS=IMAGE_CACHE_TTL_HOURS,
         IMAGE_CACHE={},
         LOG_DIR=LOG_DIR,
         LOG_FILE=LOG_FILE,

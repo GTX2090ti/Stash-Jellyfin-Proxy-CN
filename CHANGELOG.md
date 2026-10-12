@@ -2,6 +2,38 @@
 
 > `CN.x` 为本分支自研版本号（倒序在上）；CN.3 起应用内版本号带 `CN.x` 后缀。CN.x 之前为上游（feldorn/Stash-Jellyfin-Proxy）的发布记录。
 
+### v7.3.10-CN.13 —— 图片缓存服务端化：ImageTag 一键轮换 + 字节缓存 TTL（自研）
+
+**痛点（README 已知限制原文）**：原生 Jellyfin 客户端（Infuse / Swiftfin /
+SenPlayer）按 `(ItemId, ImageTag)` 缓存图片、忽略 HTTP 缓存头，因此
+Stash 换图后客户端永远显示旧图——旧版只能靠**重启代理**（且仅媒体库
+磁贴参与轮换），个别图片卡死只能清客户端缓存。
+
+**本次改动**：
+
+1. **ImageTag 全局盐（`runtime.IMAGE_TAG`）**：全部 Item 的
+   `ImageTags.Primary` / `ImageBlurHashes` 键 / `BackdropImageTags` 从
+   静态 `"img"` 改为读取 `runtime.IMAGE_TAG`（默认仍为 `"img"`，升级
+   不冲击既有客户端缓存）；媒体库磁贴 `_library_image_tag` 的盐也
+   并入该值。
+2. **Web UI「Clear Cache」升级为图片刷新**：`POST /api/cache/clear`
+   清空全部内存缓存的同时把 `IMAGE_TAG` 轮换为新随机值 → 客户端下次
+   轮询列表拿到新 tag，自动全库重新拉图，**无需重启、无需清客户端缓存**。
+   响应体新增 `imageTag` 字段供前端展示。
+3. **字节缓存 TTL（新配置 `IMAGE_CACHE_TTL_HOURS`，默认 24）**：
+   `IMAGE_CACHE` 条目带 `time.monotonic()` 过期时间，过期即回源 Stash
+   重新拉取，图片不会无限期冻结；支持配置文件与环境变量，`0` 表示
+   禁用字节缓存。
+4. **`i18n_audit` 白名单补录**：主题切换按钮 `DAY`/`DARK`/`Theme`/
+   `Light theme`/`Dark theme` 按 index.html 注释属"各语言保持一致"
+   的视觉标识，补入 `ALLOW_UNTRANSLATED`，门禁恢复全绿。
+
+**验证**：新增 `tests/unit/test_image_cache.py`（9 例：ETag 首次 200、
+304 命中、内容变化 200、过期条目跳过、轮换后 tag 变化、GET 拒绝等）；
+`test_performer_fields.py` 的 ImageTags 断言同步为 `runtime.IMAGE_TAG`。
+全量单测 374 例通过，特征测试通过，`compileall` / `node --check` /
+`i18n_audit` 全绿。
+
 ### v7.3.10-CN.12 —— 厂商详情 500 修复 + Yamby 厂商页宽轨 + 演员卡中文化（自研）
 
 **修复（500）**：SenPlayer/客户端点厂商（studio）详情

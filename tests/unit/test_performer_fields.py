@@ -108,8 +108,8 @@ def test_collection_type_only_for_boxset():
 
 def test_image_tags_reflect_whether_an_image_exists():
     with_img = performer_fields(_performer(image_path="/p.jpg"), "p-45", "Person")
-    assert with_img["ImageTags"] == {"Primary": "img"}
-    assert with_img["BackdropImageTags"] == ["img"]
+    assert with_img["ImageTags"] == {"Primary": runtime.IMAGE_TAG}
+    assert with_img["BackdropImageTags"] == [runtime.IMAGE_TAG]
     # No image -> no tags, or clients request an image that 404s.
     no_img = performer_fields(_performer(image_path=None), "p-45", "Person")
     assert no_img["ImageTags"] == {}

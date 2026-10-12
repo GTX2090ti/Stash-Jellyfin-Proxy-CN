@@ -70,6 +70,9 @@ ALLOW_UNTRANSLATED = {
     "stash_jellyfin_proxy.conf",
     # Language names are always shown in their own language.
     "English", "AUTO", "EN",
+    # Theme-switch visual labels: index.html requires "DAY"/"DARK" to read
+    # the same in every language (same rationale as the language picker).
+    "DAY", "DARK", "Theme", "Light theme", "Dark theme",
 }
 
 # `"key": "value",` — the \\. alternative lets escaped quotes inside a
