@@ -1,6 +1,6 @@
 # Stash-Jellyfin Proxy（CN 分支）
 
-**当前版本 v7.3.10-CN.5** · 基于上游 [feldorn/Stash-Jellyfin-Proxy](https://github.com/feldorn/Stash-Jellyfin-Proxy) v7.3.10 · MIT
+ · 基于上游 [feldorn/Stash-Jellyfin-Proxy](https://github.com/feldorn/Stash-Jellyfin-Proxy) v7.3.10 · MIT
 
 一个 Python 代理服务器，通过模拟 Jellyfin 的 HTTP API，让兼容 Jellyfin 的媒体播放器（Infuse / Swiftfin / SenPlayer 等）直接浏览并播放 [Stash](https://stashapp.cc/) 媒体库。
 
