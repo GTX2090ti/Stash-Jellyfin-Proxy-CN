@@ -13,6 +13,8 @@
 | **多文件（合并）场景播放** | 合并场景的每个文件作为独立版本下发，客户端出现版本选择器；非主文件由代理直读磁盘（拖进度条正常），主文件仍走 Stash 原生流。默认关闭，需 `MULTI_FILE_SCENES=true` + `LIBRARY_PATH_MAP` | [MULTIFILE-AND-I18N.md](MULTIFILE-AND-I18N.md) |
 | **配置界面中英双语** | Web 界面 8 个标签页全部支持中英切换，侧边栏一键切换；协议层零改动 | [MULTIFILE-AND-I18N.md](MULTIFILE-AND-I18N.md) |
 | **元数据刮削管线** | 打通手机 App 的 Identify / 刷新元数据：按名搜索、纯数字编号、URL 直刮三类入口，支持社区刮削器 + StashDB / ThePornDB | [SCRAPING-NOTES.md](SCRAPING-NOTES.md) |
+| **章节 + 跳过片头/片尾** | Stash scene markers 双向映射：详情 DTO 带 `Chapters[]`（时间线章节点）；`/MediaSegments` 按标记标签分类出 Intro/Outro/Commercial 等区间供客户端显示跳过按钮 | [CHANGELOG.md](CHANGELOG.md)（CN.14） |
+| **相关推荐 / 随机播放** | 详情页「More Like This」按共享演员×3、标签×1、同厂牌×1 打分推荐；InstantMix 支持相关池/厂牌内/全库随机；Suggestions 推荐轨填最近添加 | [CHANGELOG.md](CHANGELOG.md)（CN.14） |
 | **媒体库名汉化** | 客户端里的库分类名（场景 / 厂商 / 演员 / 分组 / 播放列表）已汉化 | — |
 | **客户端导航兼容** | 按客户端 UA 下发合适的条目类型（SenPlayer / Yamby → `Studio`，Infuse → `BoxSet`）；`GenreIds=studio-N` / `StudioIds` / `ParentId=studio-N` 等各客户端写法统一解析为容器定位；容器型 `/Similar` 返回该容器的作品；空工作室（0 场景）不下发 | [CHANGELOG.md](CHANGELOG.md) |
 

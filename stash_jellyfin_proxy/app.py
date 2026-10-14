@@ -224,6 +224,7 @@ routes = [
     # Canonical Jellyfin shape (same precedent as Intros below) — some
     # clients scope item sub-resources under /Users/{uid}/Items.
     Route("/Users/{user_id}/Items/{item_id}/Similar", endpoint_similar),
+    Route("/Users/{user_id}/Items/{item_id}/InstantMix", endpoint_instant_mix),
     Route("/Items/{item_id}/Intros", endpoint_intros),
     Route("/Users/{user_id}/Items/{item_id}/Intros", endpoint_intros),
     Route("/Items/{item_id}/SpecialFeatures", endpoint_special_features),

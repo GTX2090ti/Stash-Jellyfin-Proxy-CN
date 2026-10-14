@@ -12,6 +12,7 @@ Helper functions:
   format_filters_folder     — build the FILTERS virtual folder item
   format_saved_filter_item  — build a single saved-filter folder item
 """
+import asyncio
 import json
 import logging
 import os
@@ -798,12 +799,16 @@ async def endpoint_items(request):
     # payload). The scene's own top-level `tags { name id }` is the one
     # actually consumed by GenreItems.
     scene_fields = "id title code date details play_count resume_time last_played_at files { id path basename duration size video_codec audio_codec width height frame_rate bit_rate } studio { id name tags { name id } parent_studio { id name tags { name id } } } tags { name id } performers { name id image_path } captions { language_code caption_type } stash_ids { stash_id }"
+    # `/Items?ids=...` is a detail-shaped fetch (whole rows), so include
+    # markers for Chapters[]; plain list queries below keep using the
+    # marker-free field set.
+    scene_detail_fields = scene_fields + " markers { id title seconds primary_tag { id name } tags { id name } }"
 
     if ids:
         # Specific items requested
         id_list = ids.split(',')
         for iid in id_list:
-            q = f"""query FindScene($id: ID!) {{ findScene(id: $id) {{ {scene_fields} }} }}"""
+            q = f"""query FindScene($id: ID!) {{ findScene(id: $id) {{ {scene_detail_fields} }} }}"""
             res = await stash_query(q, {"id": iid})
             scene = res.get("data", {}).get("findScene")
             if scene:
@@ -2830,6 +2835,283 @@ async def similar_items_for(item_id: str, limit: int = 20, start_index: int = 0)
     return {"Items": items, "TotalRecordCount": total_count, "StartIndex": start_index}
 
 
+# --- Scene-level "more like this" / shuffle / suggestions ----------------
+#
+# Jellyfin fills detail-page rails from /Items/{scene}/Similar and player
+# shuffle from /Items/{id}/InstantMix; Streamyfin/Roku additionally poll
+# /Items/Suggestions. Stash has no similarity relation, so we derive one:
+# fetch a bounded candidate pool (scenes sharing any performer, tag, or
+# the studio), score in Python by overlap, and rank. Everything here
+# degrades to an empty page when the seed scene or its graph edges are
+# missing — never an error.
+
+_RELATED_SCENE_FIELDS = (
+    "id title code date details play_count resume_time last_played_at "
+    "files { id path basename duration size video_codec audio_codec width height frame_rate bit_rate } "
+    "studio { id name tags { name id } parent_studio { id name tags { name id } } } "
+    "tags { name id } performers { name id image_path } "
+    "captions { language_code caption_type } stash_ids { stash_id }"
+)
+
+# Candidate-pool caps (per edge). Union of the three pools is at most
+# 300 scenes; scoring is in-process over that. Caps keep a popular
+# performer/tag fan-out from dragging the whole library into memory.
+RELATED_PERFORMER_POOL = 120
+RELATED_TAG_POOL = 120
+RELATED_STUDIO_POOL = 60
+# Only the first N edges of each kind seed the query — a scene tagged
+# with hundreds of tags would otherwise issue a giant INCLUDES list.
+_RELATED_MAX_SEED_VALUES = 25
+
+_RELATED_PERFORMER_WEIGHT = 3
+_RELATED_TAG_WEIGHT = 1
+_RELATED_STUDIO_WEIGHT = 1
+
+_INSTANT_MIX_DEFAULT_LIMIT = 50
+_SUGGESTIONS_DEFAULT_LIMIT = 20
+
+
+async def _similarity_seed(numeric_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch the seed scene's graph edges (performers / tags / studio)."""
+    q = """query SimilaritySeed($id: ID!) {
+        findScene(id: $id) {
+            id
+            performers { id }
+            tags { id }
+            studio { id }
+        }
+    }"""
+    res = await stash_query(q, {"id": str(numeric_id)})
+    return res.get("data", {}).get("findScene")
+
+
+async def _related_candidate_pool(seed: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Return {scene_id: scene} for scenes sharing a performer, tag, or
+    studio with the seed. The three edge queries run concurrently."""
+    performer_ids = [p.get("id") for p in (seed.get("performers") or []) if p.get("id")]
+    tag_ids = [t.get("id") for t in (seed.get("tags") or []) if t.get("id")]
+    studio = seed.get("studio") or {}
+    studio_id = studio.get("id")
+
+    queries = []
+
+    if performer_ids:
+        queries.append(stash_query(
+            _related_query("performers: {value: $ids, modifier: INCLUDES}",
+                           RELATED_PERFORMER_POOL),
+            {"ids": performer_ids[:_RELATED_MAX_SEED_VALUES]},
+        ))
+    if tag_ids:
+        queries.append(stash_query(
+            _related_query("tags: {value: $ids, modifier: INCLUDES}",
+                           RELATED_TAG_POOL),
+            {"ids": tag_ids[:_RELATED_MAX_SEED_VALUES]},
+        ))
+    if studio_id:
+        queries.append(stash_query(
+            _related_query("studios: {value: $ids, modifier: INCLUDES}",
+                           RELATED_STUDIO_POOL),
+            {"ids": [studio_id]},
+        ))
+
+    if not queries:
+        return {}
+
+    pool: Dict[str, Dict[str, Any]] = {}
+    for result in await asyncio.gather(*queries):
+        for scene in result.get("data", {}).get("findScenes", {}).get("scenes", []) or []:
+            pool[str(scene.get("id"))] = scene
+    return pool
+
+
+# Plain token replacement (NOT str.format): the field set and query
+# body are full of GraphQL braces, which .format would interpret as
+# placeholders.
+_RELATED_QUERY_TEMPLATE = (
+    "query RelatedScenes($ids: [ID!]) {\n"
+    "    findScenes(\n"
+    "        scene_filter: { __EDGE__ },\n"
+    "        filter: {page: 1, per_page: __POOL__, sort: \"date\", direction: DESC}\n"
+    "    ) {\n"
+    f"        scenes {{ {_RELATED_SCENE_FIELDS} }}\n"
+    "    }\n"
+    "}"
+)
+
+
+def _related_query(edge: str, pool: int) -> str:
+    return _RELATED_QUERY_TEMPLATE.replace("__EDGE__", edge).replace("__POOL__", str(pool))
+
+
+def _related_scene_score(
+    scene: Dict[str, Any],
+    performer_ids: set,
+    tag_ids: set,
+    studio_id: Optional[str],
+) -> int:
+    score = _RELATED_PERFORMER_WEIGHT * sum(
+        1 for p in (scene.get("performers") or []) if p.get("id") in performer_ids
+    )
+    score += _RELATED_TAG_WEIGHT * sum(
+        1 for t in (scene.get("tags") or []) if t.get("id") in tag_ids
+    )
+    if studio_id and (scene.get("studio") or {}).get("id") == studio_id:
+        score += _RELATED_STUDIO_WEIGHT
+    return score
+
+
+def _rank_related_pool(seed: Dict[str, Any], pool: Dict[str, Dict[str, Any]],
+                       exclude_id: str) -> List[Dict[str, Any]]:
+    """Score + sort the candidate pool. Higher overlap wins; ties break
+    on newer date, then id, for stable ordering."""
+    performer_ids = {p.get("id") for p in (seed.get("performers") or []) if p.get("id")}
+    tag_ids = {t.get("id") for t in (seed.get("tags") or []) if t.get("id")}
+    studio_id = (seed.get("studio") or {}).get("id")
+
+    scored = []
+    for sid, scene in pool.items():
+        if sid == str(exclude_id):
+            continue
+        score = _related_scene_score(scene, performer_ids, tag_ids, studio_id)
+        if score <= 0:
+            continue
+        scored.append((score, scene))
+
+    scored.sort(key=lambda pair: (pair[0], pair[1].get("date") or "", pair[1].get("id") or ""),
+                reverse=True)
+    return [scene for _, scene in scored]
+
+
+async def similar_scenes_for(item_id: str, limit: int = 20, start_index: int = 0) -> Dict[str, Any]:
+    """Scored "more like this" page for a scene id.
+
+    Unlike `similar_items_for` (containers → owned scenes), this ranks
+    scenes by shared performers/tags/studio. Client Limit/StartIndex are
+    honoured as-is: this is a recommendation rail, not a container's
+    full catalogue.
+    """
+    numeric_id = get_numeric_id(item_id)
+    seed = await _similarity_seed(numeric_id)
+    if not seed:
+        return {"Items": [], "TotalRecordCount": 0, "StartIndex": start_index}
+
+    pool = await _related_candidate_pool(seed)
+    ranked = _rank_related_pool(seed, pool, numeric_id)
+
+    limit = max(1, min(int(limit or 20), runtime.MAX_PAGE_SIZE))
+    start_index = max(0, int(start_index or 0))
+    page = ranked[start_index:start_index + limit]
+    items = [format_jellyfin_item(s, parent_id=item_id) for s in page]
+    logger.debug(f"Similar scenes for {item_id}: {len(items)} returned of {len(ranked)} related")
+    return {"Items": items, "TotalRecordCount": len(ranked), "StartIndex": start_index}
+
+
+async def instant_mix_for(item_id: str, limit: int = _INSTANT_MIX_DEFAULT_LIMIT,
+                          start_index: int = 0) -> Dict[str, Any]:
+    """Shuffled playback queue.
+
+    * scene id  → the related-scene pool, shuffled
+    * container id (studio-/performer-/group-/tagitem-) → its scenes
+    * anything else → the whole library
+    """
+    limit = max(1, min(int(limit or _INSTANT_MIX_DEFAULT_LIMIT), runtime.MAX_PAGE_SIZE))
+    start_index = max(0, int(start_index or 0))
+
+    if item_id.startswith("scene-"):
+        numeric_id = get_numeric_id(item_id)
+        seed = await _similarity_seed(numeric_id)
+        if seed:
+            pool = await _related_candidate_pool(seed)
+            ranked = _rank_related_pool(seed, pool, numeric_id)
+            random.shuffle(ranked)
+            page = ranked[start_index:start_index + limit]
+            items = [format_jellyfin_item(s, parent_id=item_id) for s in page]
+            return {"Items": items, "TotalRecordCount": len(ranked), "StartIndex": start_index}
+        return {"Items": [], "TotalRecordCount": 0, "StartIndex": start_index}
+
+    from stash_jellyfin_proxy.stash.query_helpers import scene_filter_clause_for_parent
+    clause, cvars = scene_filter_clause_for_parent(item_id)
+    return await _random_scenes_page(clause, cvars, limit, start_index)
+
+
+async def suggested_items(limit: int = _SUGGESTIONS_DEFAULT_LIMIT,
+                          start_index: int = 0) -> Dict[str, Any]:
+    """`GET /Items/Suggestions` — recently-added scenes.
+
+    Jellyfin treats this as a personalised recommendation feed; the
+    proxy has no watch-state model beyond Stash itself, so recently
+    added is the honest fill and enough to populate the rails
+    Streamyfin/Roku render from this endpoint."""
+    limit = max(1, min(int(limit or _SUGGESTIONS_DEFAULT_LIMIT), runtime.MAX_PAGE_SIZE))
+    start_index = max(0, int(start_index or 0))
+    return await _paged_scenes(
+        clause="",
+        clause_vars={},
+        sort="created_at",
+        direction="DESC",
+        limit=limit,
+        start_index=start_index,
+        parent_id="root-scenes",
+    )
+
+
+async def _random_scenes_page(clause: Optional[str], clause_vars: Dict[str, Any],
+                              limit: int, start_index: int) -> Dict[str, Any]:
+    return await _paged_scenes(
+        clause=clause or "",
+        clause_vars=clause_vars or {},
+        sort="random",
+        direction="DESC",
+        limit=limit,
+        start_index=start_index,
+        parent_id="root-scenes",
+    )
+
+
+async def _paged_scenes(clause: str, clause_vars: Dict[str, Any], sort: str,
+                        direction: str, limit: int, start_index: int,
+                        parent_id: str) -> Dict[str, Any]:
+    """Count + page a findScenes query with an optional scene_filter
+    clause. Mirrors the query pair used by similar_items_for."""
+    filter_arg = f"scene_filter: {{ {clause} }}" if clause else ""
+    page = (start_index // limit) + 1
+    count_q = f"""query CountScenes($ids: [ID!]) {{
+        findScenes({filter_arg}) {{ count }}
+    }}"""
+    filter_clause = f"{filter_arg}," if filter_arg else ""
+    q = f"""query PagedScenes($ids: [ID!], $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
+        findScenes(
+            {filter_clause}
+            filter: {{page: $page, per_page: $per_page, sort: $sort, direction: $direction}}
+        ) {{
+            scenes {{ {_RELATED_SCENE_FIELDS} }}
+        }}
+    }}"""
+    q_vars = dict(clause_vars)
+    q_vars.update({"page": page, "per_page": limit, "sort": sort, "direction": direction})
+    count_res, res = await stash_query_pair(count_q, clause_vars, q, q_vars)
+    total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
+    scenes = res.get("data", {}).get("findScenes", {}).get("scenes", []) or []
+    items = [format_jellyfin_item(s, parent_id=parent_id) for s in scenes]
+    return {"Items": items, "TotalRecordCount": total_count, "StartIndex": start_index}
+
+
+async def media_segments_for_item(item_id: str) -> List[Dict[str, Any]]:
+    """`GET /MediaSegments/{item_id}` payload for scene ids — Stash
+    markers classified into typed Intro/Outro/Commercial/Recap/Preview
+    ranges. Empty list for non-scene ids and missing scenes."""
+    if not item_id.startswith("scene-"):
+        return []
+    from stash_jellyfin_proxy.mapping.markers import media_segments_from_scene
+    from stash_jellyfin_proxy.stash.scene import get_scene_markers
+
+    numeric_id = get_numeric_id(item_id)
+    scene = await get_scene_markers(numeric_id)
+    if not scene:
+        return []
+    return media_segments_from_scene(scene, f"scene-{numeric_id}")
+
+
 async def endpoint_item_details(request):
     from stash_jellyfin_proxy.mapping.genre import genre_allowed_names
     await genre_allowed_names()
@@ -2841,7 +3123,10 @@ async def endpoint_item_details(request):
     # parent-studio tags get ids too for symmetry (harmless, small extra
     # payload). The scene's own top-level `tags { name id }` is the one
     # actually consumed by GenreItems.
-    scene_fields = "id title code date details play_count resume_time last_played_at files { id path basename duration size video_codec audio_codec width height frame_rate bit_rate } studio { id name tags { name id } parent_studio { id name tags { name id } } } tags { name id } performers { name id image_path } captions { language_code caption_type } stash_ids { stash_id }"
+    # `markers` feeds Chapters[] on the detail DTO (timeline chapter
+    # points); typed skip segments are served on demand by
+    # /MediaSegments/{id} and fetched separately there.
+    scene_fields = "id title code date details play_count resume_time last_played_at files { id path basename duration size video_codec audio_codec width height frame_rate bit_rate } studio { id name tags { name id } parent_studio { id name tags { name id } } } tags { name id } performers { name id image_path } captions { language_code caption_type } stash_ids { stash_id } markers { id title seconds primary_tag { id name } tags { id name } }"
 
     # Handle special folder IDs - return the folder ITSELF (not children)
 
