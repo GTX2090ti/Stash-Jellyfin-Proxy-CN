@@ -42,15 +42,28 @@ def fake_stash(monkeypatch):
     """
     calls = []
 
+    def _related_scene(scene_id):
+        return {
+            "id": str(scene_id), "title": f"s{scene_id}",
+            "studio": {"id": "30", "name": "S", "tags": []},
+            "files": [], "performers": [{"id": "9"}], "tags": [],
+        }
+
     async def _fake(query, variables=None):
         calls.append((query, variables or {}))
+        if "SimilaritySeed" in query:
+            # Scene-level similar: seed shares performer 9 with the pool.
+            return {"data": {"findScene": {
+                "id": "1", "performers": [{"id": "9"}], "tags": [], "studio": None,
+            }}}
+        if "RelatedScenes" in query:
+            return {"data": {"findScenes": {"scenes": [
+                _related_scene(272), _related_scene(273),
+            ]}}}
         if "CountSimilar" in query:
             return {"data": {"findScenes": {"count": 90}}}
         return {"data": {"findScenes": {"scenes": [
-            {"id": "272", "title": "a", "studio": {"id": "30", "name": "S", "tags": []},
-             "files": [], "performers": [], "tags": []},
-            {"id": "273", "title": "b", "studio": {"id": "30", "name": "S", "tags": []},
-             "files": [], "performers": [], "tags": []},
+            _related_scene(272), _related_scene(273),
         ]}}}
 
     async def _fake_pair(count_query, count_vars, page_query, page_vars):
@@ -109,11 +122,20 @@ def test_endpoint_routes_studio_to_scenes(fake_stash):
     assert len(body["Items"]) == 2
 
 
-def test_endpoint_keeps_scene_similar_empty(fake_stash):
+def test_endpoint_routes_scene_to_scored_similar(fake_stash):
+    """Scene ids dispatch to similar_scenes_for (scored overlap rail),
+    not to the container owner query and not to the old empty stub."""
     req = _req({"item_id": "scene-1"}, b"Limit=10")
     resp = asyncio.run(stubs_mod.endpoint_similar(req))
     import json
-    assert json.loads(resp.body) == {"Items": [], "TotalRecordCount": 0, "StartIndex": 0}
+    body = json.loads(resp.body)
+    assert {i["Id"] for i in body["Items"]} == {"scene-272", "scene-273"}
+    assert body["TotalRecordCount"] == 2
+    assert any("SimilaritySeed" in q for q, _ in fake_stash)
+    assert any("RelatedScenes" in q and "performers" in q for q, _ in fake_stash)
+    # The scene rail must not be widened to the container page size.
+    per_pages = [v.get("per_page") for _, v in fake_stash if "per_page" in v]
+    assert stubs_mod.SIMILAR_CONTAINER_PAGE_LIMIT not in per_pages
 
 
 def test_endpoint_widens_client_limit_for_containers(fake_stash):

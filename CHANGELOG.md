@@ -2,6 +2,64 @@
 
 > `CN.x` 为本分支自研版本号（倒序在上）；CN.3 起应用内版本号带 `CN.x` 后缀。CN.x 之前为上游（feldorn/Stash-Jellyfin-Proxy）的发布记录。
 
+### v7.3.10-CN.14 —— Stash 标记点双向打通 + 场景推荐/随机播放（自研）
+
+**痛点**：Stash 里手工打的 scene markers（片头/片尾/章节点）在客户端完全
+不可见；客户端详情页的「More Like This」轨道、播放器的随机播放、以及
+Streamyfin/Roku 的 Suggestions 推荐轨全部命中空 stub（见
+`endpoints/stubs.py` 的 `endpoint_similar` / `endpoint_instant_mix` /
+`endpoint_items_suggestions` / `endpoint_media_segments`）。Stash 没有
+"相似场景"关系，但它有完整的演员/标签/厂商图——可以自己算。
+
+**功能一：Markers → 章节 + 跳过片段**
+
+1. **详情 DTO 新增 `Chapters[]`**：`/Items/{id}`、`/Videos/{id}`、
+   `/Items?ids=` 三类详情形查询的 GraphQL 字段加入 `markers`，新增
+   `mapping/markers.py` 把**全部** marker 映射成 Jellyfin 章节点
+   （`StartPositionTicks` + `Name`，按秒排序、同秒去重、名称回退
+   primary tag → `Chapter N`）。客户端播放器时间线直接出现章节跳转。
+   列表查询不取 markers，列表行负载零变化。
+2. **`/MediaSegments/{id}` 返回带类型的跳过区间**：marker 按
+   primary tag / 标签 / 标题做词边界分类，映射到 Jellyfin 10.10 的
+   五种 `MediaSegmentType`（Intro / Outro / Commercial / Recap /
+   Preview，另含 cold open、opening/closing credits 等短语），
+   Infuse/Swiftfin 据此显示「跳过片头/片尾」按钮。Stash 只存起点，
+   区间终点取下一个 marker 的起点，最后一个取场景时长——与 Jellyfin
+   官方 Chapter Segments Provider 同约定。无法分类的 marker（如
+   "Hottest"）只进章节、不进跳过区间。
+3. 多文件 id（`scene-7-f99`）自动剥离 `-f` 后缀查所属场景；非场景
+   id / 查询失败 / 无 marker 一律返回 `{"Items": []}`，与旧 stub 同形。
+
+**功能二：场景级 Similar / InstantMix / Suggestions**
+
+4. **相似场景评分**：`/Items/{scene}/Similar` 不再空返回。先查种子
+   场景的演员/标签/厂商边，再并发拉三路候选池（共享演员 120 / 共享
+   标签 120 / 同厂商 60，种子边各取前 25 个），内存打分——
+   共享演员 ×3、共享标签 ×1、同厂商 ×1，排除自身，按分数→日期→id
+   排序。容器 id 仍走 `similar_items_for` 且保留 Yamby 宽页（200）
+   逻辑；**场景轨严格尊重客户端 Limit**（Yamby 固定 Limit=10 在这里
+   本来就是对的，不做宽页）。
+5. **InstantMix 随机播放**：场景 id → 相关池洗牌；容器 id
+   （studio-/performer-/group-/tagitem-）→ 容器内随机；其他 → 全库
+   随机（Stash `sort: "random"`）。补注册用户作用域路由
+   `/Users/{uid}/Items/{id}/InstantMix`（与 Similar 同先例）。
+6. **Suggestions 填充**：`/Items/Suggestions` 从空壳改为「最近添加」
+   场景分页（代理没有比 Stash 更丰富的推荐模型，最近添加是诚实填充），
+   Streamyfin / Roku 的推荐轨不再空白。
+
+**无新增配置项**：功能全部数据驱动——场景没有 marker / 没有图边，
+响应与旧版逐字节一致。降级语义与多文件特性相同：任何 Stash 查询失败
+都记 warning 后返回同形空页，不报错。
+
+**验证**：新增 `tests/unit/test_media_markers.py`（22 例：分类词边界
+与短语优先级、章节排序/去重/命名回退、区间终点规则、DTO 集成、
+MediaSegments 端点与多文件 id）、`tests/unit/test_similar_scenes.py`
+（27 例：评分排序/自身排除/分页/缺种子/无边种子、三类 InstantMix、
+Suggestions，并含 5 例走真实 ASGI 应用 + 鉴权中间件的 HTTP 冒烟）；
+更新 `test_similar_container_items.py` 中锁定旧「场景 Similar 永远空」
+的用例为新的分发断言。全量单测 423 例通过，`compileall` /
+py3.11 语法审计 / `i18n_audit` / `node --check` 全绿。
+
 ### v7.3.10-CN.13 —— 图片缓存服务端化：ImageTag 一键轮换 + 字节缓存 TTL（自研）
 
 **痛点（README 已知限制原文）**：原生 Jellyfin 客户端（Infuse / Swiftfin /

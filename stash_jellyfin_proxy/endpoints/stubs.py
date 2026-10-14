@@ -137,25 +137,38 @@ async def endpoint_similar(request):
     rail it fills. It always asks with `Limit=10`, so the rail showed just 10
     items. For containers we therefore ignore the client Limit and serve a
     wide page (honoring StartIndex) so the rail carries the studio's full
-    catalogue. Scene ids keep the empty response — Stash has no
-    similar-scene relation.
+    catalogue. Scene ids dispatch to items.similar_scenes_for — a scored
+    "more like this" rail derived from shared performers/tags/studio.
     """
     item_id = request.path_params.get("item_id", "") or ""
+
+    def _int_param(*names, default):
+        for n in names:
+            raw = request.query_params.get(n)
+            if raw:
+                try:
+                    return int(raw)
+                except (TypeError, ValueError):
+                    continue
+        return default
+
+    limit = _int_param("Limit", "limit", default=20)
+    start_index = _int_param("StartIndex", "startIndex", default=0)
+
+    if item_id.startswith("scene-"):
+        # Scored "more like this" rail. Client Limit is honoured: unlike
+        # containers below, this is a recommendation slice, not a full
+        # catalogue, so Yamby's fixed Limit=10 is correct here.
+        from stash_jellyfin_proxy.endpoints.items import similar_scenes_for
+        try:
+            return JSONResponse(await similar_scenes_for(item_id, limit, start_index))
+        except Exception as e:
+            logger.warning(f"Similar scenes for {item_id} failed, returning empty: {e}")
+        return JSONResponse({"Items": [], "TotalRecordCount": 0, "StartIndex": start_index})
+
     if item_id.startswith(("studio-", "performer-", "group-", "tagitem-")):
         from stash_jellyfin_proxy.endpoints.items import similar_items_for
 
-        def _int_param(*names, default):
-            for n in names:
-                raw = request.query_params.get(n)
-                if raw:
-                    try:
-                        return int(raw)
-                    except (TypeError, ValueError):
-                        continue
-            return default
-
-        limit = _int_param("Limit", "limit", default=20)
-        start_index = _int_param("StartIndex", "startIndex", default=0)
         limit = max(limit, SIMILAR_CONTAINER_PAGE_LIMIT)
         try:
             return JSONResponse(await similar_items_for(item_id, limit, start_index))
@@ -168,8 +181,31 @@ async def endpoint_recommendations(request):
     return JSONResponse({"Items": [], "TotalRecordCount": 0, "StartIndex": 0})
 
 
+def _request_int(request, *names, default):
+    """First parseable query param among `names`, else default."""
+    for name in names:
+        raw = request.query_params.get(name)
+        if raw:
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                continue
+    return default
+
+
 async def endpoint_instant_mix(request):
-    return JSONResponse({"Items": [], "TotalRecordCount": 0, "StartIndex": 0})
+    """`GET /Items/{id}/InstantMix` — shuffle queue. Delegates to
+    items.instant_mix_for: related-scene pool for a scene, scoped
+    shuffle for a container, whole-library shuffle otherwise."""
+    item_id = request.path_params.get("item_id", "") or ""
+    limit = _request_int(request, "Limit", "limit", default=50)
+    start_index = _request_int(request, "StartIndex", "startIndex", default=0)
+    try:
+        from stash_jellyfin_proxy.endpoints.items import instant_mix_for
+        return JSONResponse(await instant_mix_for(item_id, limit, start_index))
+    except Exception as e:
+        logger.warning(f"InstantMix for {item_id} failed, returning empty: {e}")
+        return JSONResponse({"Items": [], "TotalRecordCount": 0, "StartIndex": start_index})
 
 
 async def endpoint_intros(request):
@@ -277,9 +313,19 @@ async def endpoint_bitrate_test(request):
 # --- Client-specific stubs ---
 
 async def endpoint_media_segments(request):
-    """MediaSegments API — Infuse doesn't use it; stub prevents unhandled
-    warnings on clients that probe for intro/outro/chapter markers."""
-    return JSONResponse({"Items": []})
+    """`GET /MediaSegments/{item_id}` — typed intro/outro/commercial
+    ranges for the player's skip buttons. Backed by Stash scene markers
+    (items.media_segments_for_item): markers classify into Jellyfin's
+    Commercial/Intro/Outro/Preview/Recap types, untyped markers stay
+    chapter-only. Non-scene ids and marker-less scenes return empty."""
+    item_id = request.path_params.get("item_id", "") or ""
+    try:
+        from stash_jellyfin_proxy.endpoints.items import media_segments_for_item
+        segments = await media_segments_for_item(item_id)
+    except Exception as e:
+        logger.warning(f"MediaSegments for {item_id} failed, returning empty: {e}")
+        segments = []
+    return JSONResponse({"Items": segments})
 
 
 async def endpoint_danmu(request):
@@ -391,9 +437,17 @@ async def endpoint_items_suggestions(request):
     """`GET /Items/Suggestions` — Streamyfin / Roku 'Recommended for you'
     rail. Without this explicit route the path gets matched by
     `/Items/{item_id}` with item_id="Suggestions", which the GraphQL layer
-    then tries to `Atoi`. Returning an empty paginated list is correct shape
-    and a no-op for users."""
-    return JSONResponse({"Items": [], "TotalRecordCount": 0, "StartIndex": 0})
+    then tries to `Atoi`. Filled with recently-added scenes via
+    items.suggested_items (the proxy has no richer recommendation model
+    than Stash itself)."""
+    limit = _request_int(request, "Limit", "limit", default=20)
+    start_index = _request_int(request, "StartIndex", "startIndex", default=0)
+    try:
+        from stash_jellyfin_proxy.endpoints.items import suggested_items
+        return JSONResponse(await suggested_items(limit, start_index))
+    except Exception as e:
+        logger.warning(f"Suggestions failed, returning empty: {e}")
+        return JSONResponse({"Items": [], "TotalRecordCount": 0, "StartIndex": start_index})
 
 
 # --- Favicon (proxied from Stash) ---

@@ -49,3 +49,26 @@ async def get_scene_info(scene_id: str) -> Dict:
 async def get_scene_title(scene_id: str) -> str:
     """Shortcut for log messages."""
     return (await get_scene_info(scene_id)).get("title", scene_id)
+
+
+async def get_scene_markers(numeric_id: str):
+    """Fetch a scene's markers plus the primary file's duration.
+
+    Backs `GET /MediaSegments/{itemId}`: typed skip ranges need start
+    markers AND an end boundary (next marker, or scene duration for the
+    final one). Returns the Stash scene dict
+    (``markers`` / ``files[0].duration``) or None when the scene is
+    missing or the query fails — callers answer an empty segment list
+    in both cases.
+    """
+    query = """query($id: ID!) {
+        findScene(id: $id) {
+            files { duration }
+            markers { id title seconds primary_tag { id name } tags { id name } }
+        }
+    }"""
+    try:
+        result = await stash_query(query, {"id": str(numeric_id)})
+        return result.get("data", {}).get("findScene")
+    except Exception:
+        return None

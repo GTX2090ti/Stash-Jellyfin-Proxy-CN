@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 
 from stash_jellyfin_proxy import runtime
 from stash_jellyfin_proxy.mapping.genre import compute_genres
+from stash_jellyfin_proxy.mapping.markers import chapters_from_scene
 from stash_jellyfin_proxy.util.series import parse_episode
 from stash_jellyfin_proxy.util.sort import sort_name_for
 
@@ -412,6 +413,14 @@ def format_jellyfin_item(
                     person["ImageBlurHashes"] = {"Primary": {person_tag: "000000"}}
                 people_list.append(person)
         item["People"] = people_list
+
+    # Chapters — only present when the scene payload actually carries
+    # Stash markers (detail queries fetch them; list queries don't).
+    # chapters_from_scene returns None for marker-less scenes, so list
+    # DTOs are unchanged.
+    chapters = chapters_from_scene(scene)
+    if chapters:
+        item["Chapters"] = chapters
 
     if path:
         item["Path"] = path
