@@ -801,8 +801,10 @@ async def endpoint_items(request):
     scene_fields = "id title code date details play_count resume_time last_played_at files { id path basename duration size video_codec audio_codec width height frame_rate bit_rate } studio { id name tags { name id } parent_studio { id name tags { name id } } } tags { name id } performers { name id image_path } captions { language_code caption_type } stash_ids { stash_id }"
     # `/Items?ids=...` is a detail-shaped fetch (whole rows), so include
     # markers for Chapters[]; plain list queries below keep using the
-    # marker-free field set.
-    scene_detail_fields = scene_fields + " markers { id title seconds primary_tag { id name } tags { id name } }"
+    # marker-free field set. `markers:` aliases Stash's real field
+    # `scene_markers` — see stash/scene.get_scene_markers for why the
+    # bare `markers` spelling 400s.
+    scene_detail_fields = scene_fields + " markers: scene_markers { id title seconds primary_tag { id name } tags { id name } }"
 
     if ids:
         # Specific items requested
@@ -3072,14 +3074,41 @@ async def _paged_scenes(clause: str, clause_vars: Dict[str, Any], sort: str,
                         direction: str, limit: int, start_index: int,
                         parent_id: str) -> Dict[str, Any]:
     """Count + page a findScenes query with an optional scene_filter
-    clause. Mirrors the query pair used by similar_items_for."""
-    filter_arg = f"scene_filter: {{ {clause} }}" if clause else ""
+    clause. Mirrors the query pair used by similar_items_for.
+
+    Two Stash validation rules bit the CN.14 shape, and each one turned a
+    whole endpoint into a silent empty page:
+
+    * `clause` already arrives spelled `scene_filter: { … }` — that is
+      what `query_helpers.scene_filter_clause_for_parent` returns, and
+      what `similar_items_for` interpolates verbatim. Wrapping it a second
+      time yields `scene_filter: { scene_filter: { … } }`, rejected as
+      `Field "scene_filter" is not defined by type "SceneFilterType"`,
+      which is how container-scoped InstantMix
+      (studio-/performer-/group-/tagitem-) lost its queue.
+    * An operation may not declare a variable its body never references
+      (`Variable "$ids" is never used`), so the filter-edge declaration is
+      emitted only when the clause actually uses it. The clause-less
+      shapes are Suggestions and library-wide InstantMix.
+    """
+    filter_arg = clause or ""
     page = (start_index // limit) + 1
-    count_q = f"""query CountScenes($ids: [ID!]) {{
-        findScenes({filter_arg}) {{ count }}
+    edge_vars = {k: v for k, v in (clause_vars or {}).items()
+                 if f"${k}" in filter_arg}
+    # Every edge scene_filter_clause_for_parent can emit binds a list of
+    # Stash ids, hence the single [ID!] spelling for the declarations.
+    edge_decl = ", ".join(f"${k}: [ID!]" for k in sorted(edge_vars))
+    count_decl = f"query CountScenes({edge_decl})" if edge_decl else "query CountScenes"
+    page_decl = ", ".join(x for x in (
+        edge_decl,
+        "$page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!",
+    ) if x)
+    scenes_args = f"({filter_arg})" if filter_arg else ""
+    count_q = f"""{count_decl} {{
+        findScenes{scenes_args} {{ count }}
     }}"""
     filter_clause = f"{filter_arg}," if filter_arg else ""
-    q = f"""query PagedScenes($ids: [ID!], $page: Int!, $per_page: Int!, $sort: String!, $direction: SortDirectionEnum!) {{
+    q = f"""query PagedScenes({page_decl}) {{
         findScenes(
             {filter_clause}
             filter: {{page: $page, per_page: $per_page, sort: $sort, direction: $direction}}
@@ -3087,9 +3116,9 @@ async def _paged_scenes(clause: str, clause_vars: Dict[str, Any], sort: str,
             scenes {{ {_RELATED_SCENE_FIELDS} }}
         }}
     }}"""
-    q_vars = dict(clause_vars)
+    q_vars = dict(edge_vars)
     q_vars.update({"page": page, "per_page": limit, "sort": sort, "direction": direction})
-    count_res, res = await stash_query_pair(count_q, clause_vars, q, q_vars)
+    count_res, res = await stash_query_pair(count_q, edge_vars, q, q_vars)
     total_count = count_res.get("data", {}).get("findScenes", {}).get("count", 0)
     scenes = res.get("data", {}).get("findScenes", {}).get("scenes", []) or []
     items = [format_jellyfin_item(s, parent_id=parent_id) for s in scenes]
@@ -3125,8 +3154,9 @@ async def endpoint_item_details(request):
     # actually consumed by GenreItems.
     # `markers` feeds Chapters[] on the detail DTO (timeline chapter
     # points); typed skip segments are served on demand by
-    # /MediaSegments/{id} and fetched separately there.
-    scene_fields = "id title code date details play_count resume_time last_played_at files { id path basename duration size video_codec audio_codec width height frame_rate bit_rate } studio { id name tags { name id } parent_studio { id name tags { name id } } } tags { name id } performers { name id image_path } captions { language_code caption_type } stash_ids { stash_id } markers { id title seconds primary_tag { id name } tags { id name } }"
+    # /MediaSegments/{id} and fetched separately there. Aliased from
+    # Stash's real field `scene_markers` — see stash/scene.py.
+    scene_fields = "id title code date details play_count resume_time last_played_at files { id path basename duration size video_codec audio_codec width height frame_rate bit_rate } studio { id name tags { name id } parent_studio { id name tags { name id } } } tags { name id } performers { name id image_path } captions { language_code caption_type } stash_ids { stash_id } markers: scene_markers { id title seconds primary_tag { id name } tags { id name } }"
 
     # Handle special folder IDs - return the folder ITSELF (not children)
 

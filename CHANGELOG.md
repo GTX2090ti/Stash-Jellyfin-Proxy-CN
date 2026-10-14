@@ -2,6 +2,57 @@
 
 > `CN.x` 为本分支自研版本号（倒序在上）；CN.3 起应用内版本号带 `CN.x` 后缀。CN.x 之前为上游（feldorn/Stash-Jellyfin-Proxy）的发布记录。
 
+### v7.3.10-CN.15 —— 修 CN.14 在真机 Stash 上打不开的三处 GraphQL（自研）
+
+**现象**（180 NAS，Stash v0.31.1 实机，CN.14 镜像）：单测 423 例全绿、CI 构建成功，
+真机却是一片 404 与空页——
+
+* `/Items/{id}`、`/Users/{uid}/Items/{id}`、`/Videos/{id}` **全部 404**（详情页打不开、
+  播放前拿不到 MediaSources）；`/Items?ids=` 返回空页。日志 5 分钟 34 条 ERROR。
+* `/Items/Suggestions` `TotalRecordCount: 0`（推荐轨仍然空白）。
+* 容器型 `/Users/{uid}/Items/studio-93|performer-1|tagitem-645/InstantMix` 一律 `Items: []`。
+
+**根因**（三处，都是「查询文档 Stash 直接拒收」，而单测把取数函数整只 monkeypatch 掉了，
+所以查询文本从没被真正执行过）：
+
+1. `Scene` 类型没有 `markers` 字段，真名是 `scene_markers`（对 0.31.1 做 schema 内省确认：
+   `Scene` 只有 `scene_markers`；`markers` 报 `Cannot query field "markers" on type "Scene"`）。
+   CN.14 在 `stash/scene.py`、`/Items?ids=` 的 `scene_detail_fields`、详情 DTO 的
+   `scene_fields` 三处都写了 `markers { … }`，于是**整条详情查询** 400——不只是章节为空，
+   而是详情/`/Videos/{id}` 一起挂掉。
+2. `_paged_scenes` 把 `scene_filter_clause_for_parent()` 返回的 clause 又包了一层
+   `scene_filter: { … }`，产出 `scene_filter: { scene_filter: { … } }` →
+   `Field "scene_filter" is not defined by type "SceneFilterType"`。同文件里的
+   `similar_items_for` 一直是原样插入的，CN.14 新函数抄漏了这层约定。
+3. `_paged_scenes` 无条件声明 `$ids: [ID!]`，而 Suggestions、全库 InstantMix 是无 clause
+   调用，正文里不引用它 → `Variable "$ids" is never used in operation "PagedScenes"`。
+   失败后按降级语义返回同形空页，所以只是「空白」，看不见错误。
+
+**修复**：
+
+1. 三处统一改为 **`markers: scene_markers`** 别名——向 Stash 要真字段，响应键仍是
+   `markers`，`mapping/markers.py` 与它的 22 例单测零改动。
+2. `_paged_scenes` 按 `similar_items_for` 的约定原样插入 clause。
+3. 边缘变量**只在 clause 实际引用时才声明并传参**（`$ids` → `[ID!]`），无 clause 时
+   退化为 `query CountScenes { findScenes { count } }`。
+
+**新增契约测试**（防同类问题再次只在真机暴露）：
+`test_media_markers.py` 扫描 `endpoints/items.py` + `stash/scene.py` 的**源码文本**，
+断言不存在裸 `markers {`、且别名恰好 3 处（少一处说明 marker 取数被删掉了）；
+`test_similar_scenes.py` 断言 clause-less 查询里不出现 `$ids`/`scene_filter`，
+容器型查询里 `scene_filter:` 只出现一次且 `$ids: [ID!]` 已声明。
+
+**验证**（180 NAS 热补丁 + 重启，容器内版本 7.3.10-CN.15）：
+详情三端点 200/2680 字节并带 `MediaSources` + `RunTimeTicks: 26552000000`；
+`/Items/scene-11/PlaybackInfo` 返回真实 Path；Suggestions 2189 条、出 10 项；
+InstantMix 容器型 studio-93=1 / performer-1=26 / tagitem-645=3；Similar 8 条；
+Views/列表/搜索/厂商详情无回归；6 分钟 **0 条 ERROR、0 个 404/500**。
+
+**已知边界**：`/MediaSegments/{id}` 与 `Chapters[]` 的真机效果仍无法验证——这台库的
+scene marker 总数为 **0**（`findSceneMarkers.count = 0`），空是正确降级。要打样验证需先
+在 Stash 里给某个场景建 marker。另：Stash 0.31.1 的 `SceneMarker` 已带 `end_seconds`，
+CN.14 按「只存起点、终点取下一个 marker」设计的逻辑依旧成立，暂不改动。
+
 ### v7.3.10-CN.14 —— Stash 标记点双向打通 + 场景推荐/随机播放（自研）
 
 **痛点**：Stash 里手工打的 scene markers（片头/片尾/章节点）在客户端完全

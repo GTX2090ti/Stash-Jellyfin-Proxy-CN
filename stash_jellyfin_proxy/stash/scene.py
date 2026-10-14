@@ -60,11 +60,18 @@ async def get_scene_markers(numeric_id: str):
     (``markers`` / ``files[0].duration``) or None when the scene is
     missing or the query fails — callers answer an empty segment list
     in both cases.
+
+    Field name: Stash spells the scene's marker list ``scene_markers``
+    (verified against v0.31.1 by schema introspection — ``markers`` is
+    not a field on ``Scene`` and Stash answers such a query with
+    `Cannot query field "markers" on type "Scene"`, a 400 that fails the
+    whole detail payload). We alias it back to ``markers`` so the mapping
+    layer keeps reading one stable key.
     """
     query = """query($id: ID!) {
         findScene(id: $id) {
             files { duration }
-            markers { id title seconds primary_tag { id name } tags { id name } }
+            markers: scene_markers { id title seconds primary_tag { id name } tags { id name } }
         }
     }"""
     try:

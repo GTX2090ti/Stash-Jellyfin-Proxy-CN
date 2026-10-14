@@ -318,3 +318,53 @@ def test_http_detail_dto_carries_chapters(client):
     assert r.status_code == 200
     chapters = r.json()["Chapters"]
     assert chapters == [{"StartPositionTicks": 5 * 10_000_000, "Name": "Intro"}]
+
+
+# --- paged-query GraphQL shape ------------------------------------------
+#
+# `_paged_scenes` builds the CountScenes/PagedScenes pair shared by
+# Suggestions and container-scoped InstantMix. Two ways it could emit a
+# document Stash rejects, both invisible to the assertions above because
+# the fake answers any query:
+#   * the clause from scene_filter_clause_for_parent already spells
+#     `scene_filter: { … }`, so re-wrapping it nests a second
+#     `scene_filter` field → `Field "scene_filter" is not defined by type
+#     "SceneFilterType"`;
+#   * declaring `$ids` for a clause-less page → `Variable "$ids" is never
+#     used in operation "PagedScenes"`.
+# Either failure degraded the endpoint to a silent empty page, which is
+# what a real Stash v0.31.1 showed for Suggestions (TotalRecordCount 0)
+# and for studio-/performer-/group- InstantMix (Items []).
+
+def _paged_docs(fake_stash):
+    return [(q, v) for q, v in fake_stash["calls"]
+            if "PagedScenes" in q or "CountScenes" in q]
+
+
+def test_clauseless_paged_queries_declare_no_unused_variable(fake_stash):
+    asyncio.run(suggested_items(limit=10))
+    asyncio.run(instant_mix_for("root-scenes", limit=10))
+    docs = _paged_docs(fake_stash)
+    assert len(docs) == 4
+    for query, variables in docs:
+        assert "$ids" not in query
+        assert "scene_filter" not in query
+        assert "ids" not in variables
+    # …while the page document still carries its paging variables (the
+    # count document takes none once the edge declaration is dropped).
+    page_docs = [v for q, v in docs if "PagedScenes" in q]
+    assert page_docs
+    for variables in page_docs:
+        assert {"page", "per_page", "sort", "direction"} <= set(variables)
+
+
+def test_container_paged_queries_wire_scene_filter_exactly_once(fake_stash):
+    asyncio.run(instant_mix_for("studio-1", limit=10))
+    docs = _paged_docs(fake_stash)
+    assert len(docs) == 2
+    for query, variables in docs:
+        assert query.count("scene_filter:") == 1
+        assert "scene_filter: {scene_filter" not in query
+        assert "scene_filter: { scene_filter" not in query
+        assert "$ids: [ID!]" in query
+        assert variables["ids"] == ["1"]

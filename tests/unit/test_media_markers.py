@@ -6,6 +6,8 @@ ranges), the Chapters[] hook inside format_jellyfin_item, and the
 """
 import asyncio
 import json
+import pathlib
+import re
 
 import pytest
 from starlette.requests import Request
@@ -252,3 +254,59 @@ def test_media_segments_non_scene_id_is_empty(monkeypatch):
     resp = asyncio.run(stubs_mod.endpoint_media_segments(_req({"item_id": "studio-3"})))
     assert json.loads(resp.body) == {"Items": []}
     assert called == []
+
+
+# --- Stash schema contract ----------------------------------------------
+#
+# CN.14 asked Stash for `markers { … }`. Stash's `Scene` type spells that
+# field `scene_markers`, so every query carrying it was rejected with
+# `Cannot query field "markers" on type "Scene"` — a 400 that took down
+# the *whole* detail payload: on a real Stash v0.31.1 `/Items/{id}`,
+# `/Users/{uid}/Items/{id}` and `/Videos/{id}` all answered 404 while the
+# suite stayed green, because every test above monkeypatches the fetcher
+# and so never exercises the query text. These two tests pin the contract
+# against the shipped modules instead of against a mock.
+
+_BARE_MARKERS = re.compile(r"(?<![:\w])markers\s*\{")
+
+
+def test_marker_fetch_aliases_stash_real_field_name(monkeypatch):
+    seen = {}
+
+    async def fake_query(query, variables=None):
+        seen["query"] = query
+        return {"data": {"findScene": {"files": [{"duration": 10}], "markers": []}}}
+
+    monkeypatch.setattr(stash_scene, "stash_query", fake_query)
+    asyncio.run(stash_scene.get_scene_markers("11"))
+
+    q = seen["query"]
+    assert "markers: scene_markers {" in q
+    assert not _BARE_MARKERS.search(q)
+    # the alias keeps the mapping layer's payload key stable
+    assert chapters_from_scene({
+        "markers": [_marker(1, 5, title="Intro")],
+        "files": [{"duration": 100}],
+    })
+
+
+def test_no_shipped_query_asks_stash_for_a_bare_markers_field():
+    from stash_jellyfin_proxy.endpoints import items as items_mod
+
+    endpoints_dir = pathlib.Path(items_mod.__file__).parent
+    sources = {
+        "endpoints/items.py": endpoints_dir / "items.py",
+        "stash/scene.py": endpoints_dir.parent / "stash" / "scene.py",
+    }
+    aliased = 0
+    for label, path in sources.items():
+        code = "\n".join(
+            line for line in path.read_text(encoding="utf-8").splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        assert not _BARE_MARKERS.search(code), f"{label} fetches markers without the scene_markers alias"
+        aliased += code.count("markers: scene_markers")
+    assert aliased == 3, (
+        "expected the alias at /Items?ids=, the detail DTO and "
+        "get_scene_markers — a lower count means a marker fetch disappeared"
+    )
