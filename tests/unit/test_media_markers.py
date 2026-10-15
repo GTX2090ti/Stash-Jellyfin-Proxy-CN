@@ -194,9 +194,28 @@ def test_item_dto_carries_chapters_when_markers_present():
         _marker(2, 200, title="Main", primary="Hottest"),
     ]))
     assert item["Chapters"] == [
-        {"StartPositionTicks": 12 * TICKS_PER_SECOND, "Name": "Intro bit"},
-        {"StartPositionTicks": 200 * TICKS_PER_SECOND, "Name": "Main"},
+        {"StartPositionTicks": 12 * TICKS_PER_SECOND, "Name": "Intro bit",
+         "ImageTag": "m1s12"},
+        {"StartPositionTicks": 200 * TICKS_PER_SECOND, "Name": "Main",
+         "ImageTag": "m2s200"},
     ]
+
+
+def test_chapter_image_tag_tracks_marker_identity_and_position():
+    """The tag is the client's image-URL key: unique per marker and
+    changing when that marker moves, so a shifted index can't serve a
+    stale thumbnail from cache."""
+    scene = {"markers": [
+        _marker(7, 30, title="A"),
+        _marker(8, 30.9, title="B"),  # same integer second, distinct id
+    ]}
+    tags = [c["ImageTag"] for c in chapters_from_scene(scene)]
+    assert tags == ["m7s30", "m8s30"]
+    assert len(set(tags)) == 2
+
+    # Same marker id, later second → different tag.
+    moved = chapters_from_scene({"markers": [_marker(7, 45, title="A")]})
+    assert moved[0]["ImageTag"] == "m7s45"
 
 
 def test_item_dto_unchanged_without_markers():
@@ -254,6 +273,61 @@ def test_media_segments_non_scene_id_is_empty(monkeypatch):
     resp = asyncio.run(stubs_mod.endpoint_media_segments(_req({"item_id": "studio-3"})))
     assert json.loads(resp.body) == {"Items": []}
     assert called == []
+
+
+# --- /Items/{id}/Images/Chapter/{index} endpoint ------------------------
+
+def _chapter_req(item_id, index):
+    return Request({
+        "type": "http", "method": "GET",
+        "path": f"/Items/{item_id}/Images/Chapter/{index}",
+        "path_params": {"item_id": item_id, "index": index},
+        "query_string": b"", "headers": [],
+    })
+
+
+def test_chapter_image_maps_index_to_marker_screenshot(monkeypatch):
+    from stash_jellyfin_proxy.endpoints import images as images_mod
+
+    async def fake_get(numeric_id):
+        assert numeric_id == "7"
+        return {"markers": [
+            _marker(11, 10, title="A"),
+            _marker(12, 100, title="B"),
+        ]}
+
+    fetched = {}
+
+    async def fake_fetch(url, extra_headers=None, timeout=30):
+        fetched["url"] = url
+        return b"\xff\xd8jpegdata", "image/jpeg", {}
+
+    monkeypatch.setattr(stash_scene, "get_scene_markers", fake_get)
+    monkeypatch.setattr(images_mod, "fetch_from_stash", fake_fetch)
+
+    resp = asyncio.run(images_mod.endpoint_chapter_image(_chapter_req("scene-7", "1")))
+    assert resp.status_code == 200
+    assert resp.media_type == "image/jpeg"
+    # index 1 → the second marker in timeline order, not insertion order.
+    assert fetched["url"].endswith("/scene/7/scene_marker/12/screenshot")
+
+
+def test_chapter_image_out_of_range_is_404(monkeypatch):
+    from stash_jellyfin_proxy.endpoints import images as images_mod
+
+    async def fake_get(numeric_id):
+        return {"markers": [_marker(11, 10, title="A")]}
+
+    monkeypatch.setattr(stash_scene, "get_scene_markers", fake_get)
+    resp = asyncio.run(images_mod.endpoint_chapter_image(_chapter_req("scene-7", "5")))
+    assert resp.status_code == 404
+
+
+def test_chapter_image_non_numeric_index_is_404():
+    from stash_jellyfin_proxy.endpoints import images as images_mod
+
+    resp = asyncio.run(images_mod.endpoint_chapter_image(_chapter_req("scene-7", "abc")))
+    assert resp.status_code == 404
 
 
 # --- Stash schema contract ----------------------------------------------

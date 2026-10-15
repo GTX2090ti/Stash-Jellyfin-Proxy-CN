@@ -24,8 +24,13 @@ from stash_jellyfin_proxy.middleware.logging import RequestLoggingMiddleware
 from stash_jellyfin_proxy.middleware.paths import CaseInsensitivePathMiddleware
 
 # --- Endpoint imports ---
-from stash_jellyfin_proxy.endpoints.images import endpoint_image
-from stash_jellyfin_proxy.endpoints.items import endpoint_items, endpoint_item_details
+from stash_jellyfin_proxy.endpoints.images import endpoint_image, endpoint_chapter_image
+from stash_jellyfin_proxy.endpoints.items import (
+    endpoint_items,
+    endpoint_item_details,
+    endpoint_trickplay_tile,
+    endpoint_trickplay_playlist,
+)
 from stash_jellyfin_proxy.endpoints.misc import endpoint_display_preferences, endpoint_websocket
 from stash_jellyfin_proxy.endpoints.metadata import (
     endpoint_item_image_upload,
@@ -266,6 +271,12 @@ routes = [
     Route("/Videos/{item_id}/{item_id2}/Subtitles/{subtitle_index}/0/Stream.vtt", endpoint_subtitle),
     Route("/Videos/{item_id}/{item_id2}/Subtitles/{subtitle_index}/Stream.srt", endpoint_subtitle),
     Route("/Videos/{item_id}/{item_id2}/Subtitles/{subtitle_index}/Stream.vtt", endpoint_subtitle),
+    # --- Trickplay scrubber previews (endpoints/items.py) ---
+    # Stash's generated sprite sheet, re-served as Jellyfin's tile + HLS
+    # playlist. Registered alongside the other `/Videos/{id}/…` sub-paths
+    # so the bare `/Videos/{item_id}` document below can't shadow them.
+    Route("/Videos/{item_id}/Trickplay/{width}/{index}.jpg", endpoint_trickplay_tile),
+    Route("/Videos/{item_id}/Trickplay/{width}/tiles.m3u8", endpoint_trickplay_playlist),
     # `GET /Videos/{id}` — the per-video metadata document. Clients fetch
     # this right before playback and render the in-player version switcher
     # from its `MediaSources`. It had no route, so it fell through to
@@ -286,6 +297,11 @@ routes = [
     Route("/Items/{item_id}/Images/Thumb", endpoint_image),
     Route("/Items/{item_id}/Images/Backdrop", endpoint_image),
     Route("/Items/{item_id}/Images/Backdrop/{index}", endpoint_image),
+    # Chapter thumbnail — the marker screenshot that lines up with the
+    # `Chapters[i]` entry the detail DTO advertises. Distinct segment
+    # count from `/Items/{id}/Images/{image_type}`, so registration order
+    # doesn't matter, but it sits with the other image sub-resources.
+    Route("/Items/{item_id}/Images/Chapter/{index}", endpoint_chapter_image),
     Route("/Items/{item_id}/Images/Logo", endpoint_item_image_logo, methods=["GET", "HEAD"]),
     Route("/Items/{item_id}/Images/Logo/{index}", endpoint_item_image_logo, methods=["GET", "HEAD"]),
     Route("/Items/{item_id}/Images", endpoint_item_images_list),

@@ -19,12 +19,14 @@ import os
 import random
 from typing import Any, Dict, List, Optional
 
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from stash_jellyfin_proxy import runtime
 from stash_jellyfin_proxy.mapping.performer import PACKET_FIELDS
 from stash_jellyfin_proxy.mapping.scene import format_jellyfin_item, is_group_favorite
-from stash_jellyfin_proxy.stash.client import stash_query, stash_query_pair
+from stash_jellyfin_proxy.mapping.trickplay import tiles_playlist
+from stash_jellyfin_proxy.stash.client import fetch_from_stash, stash_query, stash_query_pair
+from stash_jellyfin_proxy.stash.scene import get_scene_trickplay
 from stash_jellyfin_proxy.stash.tags import get_or_create_tag
 from stash_jellyfin_proxy.stash.query_helpers import (
     get_stash_sort_params,
@@ -3141,6 +3143,91 @@ async def media_segments_for_item(item_id: str) -> List[Dict[str, Any]]:
     return media_segments_from_scene(scene, f"scene-{numeric_id}")
 
 
+def _trickplay_manifest(item: Dict[str, Any], trickplay: Dict[str, Any]) -> Dict[str, Any]:
+    """Wrap one scene's TrickplayInfoDto in Jellyfin's manifest shape.
+
+    Jellyfin keys trickplay by media source id and then by tile width:
+    ``{mediaSourceId: {width: TrickplayInfoDto}}``. The client looks up
+    the manifest with the id from the MediaSource it is playing, so the
+    key has to be that source's `Id`, not the scene id. Stash only ever
+    generates sprites for the scene's primary file, so only the first
+    source is advertised.
+    """
+    sources = item.get("MediaSources") or []
+    source_id = (sources[0].get("Id") if sources else None) or item.get("Id") or ""
+    if not source_id:
+        return {}
+    info = trickplay.get("info") or {}
+    return {source_id: {str(info.get("Width")): info}}
+
+
+async def endpoint_trickplay_tile(request):
+    """`GET /Videos/{item_id}/Trickplay/{width}/{index}.jpg` — one sprite
+    sheet of scrubber thumbnails.
+
+    Stash generates a single square sheet per scene, so Jellyfin's sheet
+    0 is that sheet and every other index is out of range. The requested
+    width is the one the manifest advertised (the only width Stash can
+    serve), so it is accepted but not matched against. 404 whenever the
+    scene has no sprite or Stash fails, which is what the client expects
+    for a video with no trickplay.
+    """
+    item_id = request.path_params.get("item_id", "") or ""
+    index = request.path_params.get("index", "0")
+    if index != "0":
+        return Response(status_code=404)
+
+    numeric_id = get_numeric_id(item_id)
+    if not numeric_id:
+        return Response(status_code=404)
+    resolved = await get_scene_trickplay(numeric_id)
+    if not resolved:
+        return Response(status_code=404)
+
+    headers = {"ApiKey": runtime.STASH_API_KEY} if runtime.STASH_API_KEY else {}
+    try:
+        data, content_type, _ = await fetch_from_stash(
+            resolved["sprite_url"], extra_headers=headers, timeout=30
+        )
+    except Exception as e:
+        logger.debug(f"trickplay sprite fetch failed for {item_id}: {e}")
+        return Response(status_code=404)
+    if not data or not (content_type or "").startswith("image/"):
+        return Response(status_code=404)
+    # Sprites are immutable per file, so let clients keep the sheet.
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+async def endpoint_trickplay_playlist(request):
+    """`GET /Videos/{item_id}/Trickplay/{width}/tiles.m3u8` — the image
+    tiles playlist the player parses for scrubber previews.
+
+    Built from the same resolved sprite as the tile endpoint (see
+    mapping/trickplay.tiles_playlist). 404 when there is no sprite, so a
+    client degrades to a scrubber with no previews.
+    """
+    item_id = request.path_params.get("item_id", "") or ""
+    numeric_id = get_numeric_id(item_id)
+    if not numeric_id:
+        return Response(status_code=404)
+    resolved = await get_scene_trickplay(numeric_id)
+    if not resolved:
+        return Response(status_code=404)
+
+    body = tiles_playlist(resolved["info"])
+    if not body:
+        return Response(status_code=404)
+    return Response(
+        content=body,
+        media_type="application/vnd.apple.mpegurl",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 async def endpoint_item_details(request):
     from stash_jellyfin_proxy.mapping.genre import genre_allowed_names
     await genre_allowed_names()
@@ -3695,6 +3782,17 @@ async def endpoint_item_details(request):
     scene = res.get("data", {}).get("findScene")
     if not scene:
         return JSONResponse({"error": "Not found"}, status_code=404)
-    return JSONResponse(format_jellyfin_item(scene))
+    item = format_jellyfin_item(scene)
+    # Trickplay/scrubber previews — advertised only on the detail DTO,
+    # which is where clients read the manifest from. Scenes whose sprites
+    # were never generated (or whose VTT is unreadable) get no `Trickplay`
+    # key at all, so the client behaves exactly as against a Jellyfin
+    # server without trickplay data.
+    trickplay = await get_scene_trickplay(numeric_id)
+    if trickplay:
+        manifest = _trickplay_manifest(item, trickplay)
+        if manifest:
+            item["Trickplay"] = manifest
+    return JSONResponse(item)
 
 

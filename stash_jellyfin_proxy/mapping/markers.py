@@ -99,6 +99,36 @@ def _chapter_name(marker: Dict[str, Any], index: int) -> str:
     return f"Chapter {index + 1}"
 
 
+def chapter_markers(scene: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The markers that become chapters, in timeline order.
+
+    Sorted by start time, negatives dropped, markers sharing a timestamp
+    collapsed to the first. Shared with the thumbnail endpoint so a
+    chapter's list index means the same marker on both sides.
+    """
+    ordered: List[Dict[str, Any]] = []
+    seen_seconds: set = set()
+    for marker in _sorted_markers(scene):
+        seconds = float(marker.get("seconds") or 0)
+        if seconds < 0 or seconds in seen_seconds:
+            continue
+        seen_seconds.add(seconds)
+        ordered.append(marker)
+    return ordered
+
+
+def chapter_image_tag(marker: Dict[str, Any]) -> str:
+    """ETag a client echoes back when fetching this chapter's thumbnail
+    (`/Items/{id}/Images/Chapter/{index}?tag=…`).
+
+    Marker id keeps it unique per marker; the extra start second makes it
+    change when the marker moves, so inserting an earlier marker can't
+    leave a stale image cached under a now-shifted index.
+    """
+    seconds = int(float(marker.get("seconds") or 0))
+    return f"m{marker.get('id')}s{seconds}"
+
+
 def chapters_from_scene(scene: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
     """Build Jellyfin ChapterInfo[] from every marker on the scene.
 
@@ -106,22 +136,22 @@ def chapters_from_scene(scene: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]
     can distinguish "chapter data fetched and empty" from "never
     fetched" — and, more importantly, so item DTOs stay byte-identical
     for scenes whose GraphQL payload predates the markers field.
-    Markers sharing the same timestamp collapse to one chapter.
+
+    Each chapter also carries an ImageTag: chapterCardBuilder only draws
+    a thumbnail when one is present, and derives its URL from the tag
+    plus the chapter's index. Without it clients render a generic icon.
     """
     markers = scene.get("markers")
     if not markers:
         return None
 
     chapters: List[Dict[str, Any]] = []
-    seen_seconds: set = set()
-    for marker in _sorted_markers(scene):
+    for marker in chapter_markers(scene):
         seconds = float(marker.get("seconds") or 0)
-        if seconds < 0 or seconds in seen_seconds:
-            continue
-        seen_seconds.add(seconds)
         chapters.append({
             "StartPositionTicks": int(seconds * TICKS_PER_SECOND),
             "Name": _chapter_name(marker, len(chapters)),
+            "ImageTag": chapter_image_tag(marker),
         })
     return chapters or None
 

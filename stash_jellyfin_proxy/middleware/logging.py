@@ -36,10 +36,17 @@ def is_playback_path(path: str) -> bool:
     `/Videos/{id}` has 3 segments; every playback route has 4+ (the
     `{item_id}` placeholder never contains a slash — file-scoped ids look
     like `scene-12-f345`).
+
+    Trickplay scrubber assets (`/Videos/{id}/Trickplay/…`) also live
+    under `/Videos/` with 4+ segments but are still image/HLS metadata —
+    one fetch per seek would otherwise spam the live-stream table — so
+    they are excluded explicitly.
     """
     pl = (path or "").lower()
     if "/stream" in pl:
         return True
+    if "/trickplay" in pl:
+        return False
     return pl.startswith("/videos/") and pl.count("/") > 3
 
 

@@ -2,9 +2,25 @@
 and stream tracking. The full scene→Item mapping lives in
 proxy/mapping/scene.py; this module only fetches the handful of fields
 the RequestLoggingMiddleware and /api/streams endpoint need."""
-from typing import Dict
+import logging
+import time
+from typing import Any, Dict, Optional
 
-from .client import stash_query
+from stash_jellyfin_proxy import runtime
+from stash_jellyfin_proxy.mapping.trickplay import (
+    rebase_stash_url,
+    trickplay_info_from_vtt,
+)
+
+from .client import _get_async_client, fetch_from_stash, stash_query
+
+logger = logging.getLogger("stash-jellyfin-proxy")
+
+# Resolved trickplay per scene id -> (expires_at_monotonic, result|None).
+# A scene's sprite is fixed once generated, so the derived geometry is
+# stable and the detail DTO plus every tile request can share one parse.
+_TRICKPLAY_CACHE: Dict[str, tuple] = {}
+_TRICKPLAY_TTL_SECONDS = 600.0
 
 
 async def get_scene_info(scene_id: str) -> Dict:
@@ -78,4 +94,50 @@ async def get_scene_markers(numeric_id: str):
         result = await stash_query(query, {"id": str(numeric_id)})
         return result.get("data", {}).get("findScene")
     except Exception:
+        return None
+
+
+async def get_scene_trickplay(numeric_id: str) -> Optional[Dict[str, Any]]:
+    """Resolve a scene's Stash sprite into the scrubber-preview geometry
+    Jellyfin needs.
+
+    Returns ``{"info": TrickplayInfoDto, "sprite_url": <proxied Stash
+    URL>}`` or None when the scene has no generated sprite, the scene is
+    missing, or the VTT is unreadable — every failure mode collapses to
+    "no trickplay", which is what a client shows for a video whose
+    sprites were never generated.
+
+    Stash stores the sprite paths on ``scene.paths`` (web-only fields it
+    derives from the file hash), so one GraphQL call yields both the
+    sheet URL and the index; the index text is then parsed for the grid
+    and interval (see mapping/trickplay.py). Cached per scene because the
+    detail DTO and every tile request read through here.
+    """
+    key = str(numeric_id)
+    now = time.monotonic()
+    hit = _TRICKPLAY_CACHE.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+
+    result = await _load_scene_trickplay(key)
+    _TRICKPLAY_CACHE[key] = (now + _TRICKPLAY_TTL_SECONDS, result)
+    return result
+
+
+async def _load_scene_trickplay(numeric_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        query = """query($id: ID!) { findScene(id: $id) { paths { vtt sprite } } }"""
+        result = await stash_query(query, {"id": numeric_id})
+        paths = (result.get("data", {}).get("findScene") or {}).get("paths") or {}
+        vtt_url = rebase_stash_url(paths.get("vtt") or "", runtime.STASH_URL)
+        sprite_url = rebase_stash_url(paths.get("sprite") or "", runtime.STASH_URL)
+        if not vtt_url or not sprite_url:
+            return None
+        body, _content_type, _headers = await fetch_from_stash(vtt_url, timeout=15)
+        info = trickplay_info_from_vtt(body.decode("utf-8", errors="replace")) if body else None
+        if not info:
+            return None
+        return {"info": info, "sprite_url": sprite_url}
+    except Exception as e:
+        logger.debug(f"trickplay lookup failed for scene {numeric_id}: {e}")
         return None

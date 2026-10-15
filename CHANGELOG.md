@@ -2,6 +2,45 @@
 
 > `CN.x` 为本分支自研版本号（倒序在上）；CN.3 起应用内版本号带 `CN.x` 后缀。CN.x 之前为上游（feldorn/Stash-Jellyfin-Proxy）的发布记录。
 
+### v7.3.10-CN.16 —— 章节缩略图 + 拖动预览（Trickplay）（自研）
+
+**新增**：把 Stash 已生成的两类预览资产接到客户端的两个可视面上（**无新增配置项、
+无新外部依赖**）。
+
+1. **章节缩略图**——章节时间轴旁的小图。Stash 打 marker 时会同时存一张截图，
+   代理经 `GET /Items/{id}/Images/Chapter/{index}` 按章节序号回取
+   `/scene/{sceneId}/scene_marker/{markerId}/screenshot`；详情 DTO 的 `Chapters[i]`
+   新增 `ImageTag`，客户端用「tag + 索引」构造图片 URL（`chapterCardBuilder`）。
+   章节列表与图片端点共用 `mapping.markers.chapter_markers`，索引 1:1 对应、不会错位。
+2. **拖动预览（Trickplay）**——进度条拖动时的缩略图。解析 Stash 的 `_sprite.jpg`
+   （`ceil(sqrt(n))²` 方形雪碧图）与 `_thumbs.vtt`（每格像素矩形）得到 Jellyfin 所需的
+   `Width/Height/TileWidth/TileHeight/ThumbnailCount/Interval`，经
+   `GET /Videos/{id}/Trickplay/{width}/tiles.m3u8`（HLS 图集清单）+ `{index}.jpg`
+   （雪碧图本体）下发。VTT 解析为纯文本，复用现有 TTL 缓存，不引入 ffmpeg/Pillow 新用途。
+
+**降级语义**（一切失败都退回「上游没有该数据」的既有表现）：
+- scene 无 marker → `Chapters[]` 不带 `ImageTag`、图片端点 404，客户端回退通用章节图标；
+- 无 sprite / VTT 不可解析 / Stash 失败 → 详情 DTO 不带 `Trickplay` 键、拖动端点 404，
+  与「sprites 从未生成」的 Jellyfin 服务器逐字节同形；
+- 越界/非数字索引、非 `scene-` id → 404。
+
+**顺带修正**：`middleware/logging.is_playback_path` 显式排除
+`/Videos/{id}/Trickplay/…`。这类图集请求此前会被计入 Dashboard 的实时流表（每次拖动
+一个幻影流记录 + 一次多余 `get_scene_info` 查询）。现由
+`test_videos_route_versions.py::test_every_registered_videos_route_is_classified_consistently`
+自动校验每个 `/Videos/…` 路由的分类一致性。
+
+**验证**（自测）：新增 `tests/unit/test_trickplay.py`（VTT→几何、Stash URL 重定向、
+m3u8 清单体、Trickplay 清单结构、两端点行为、路径分类）与 `test_media_markers.py`
+新增的章节 `ImageTag` / 章节图片端点用例；`test_media_markers.py`、
+`test_similar_scenes.py` 中既有的章节断言已同步 `ImageTag`。`tests/unit` 456 例全绿；
+语法门禁（58 文件 py3.11）与 i18n 审计（388 键）通过。
+
+**已知边界**：真机效果待验——需先具备（1）带 marker 的场景（本库 `findSceneMarkers.count = 0`，
+章节本来就空，属正确降级）与（2）已生成 sprite 的场景（Stash 需在
+「Settings → Library → Generate：Preview/Sprites」开启并有媒体扫描过）。二者到位后即可在
+客户端看到章节缩略图与拖动预览。
+
 ### v7.3.10-CN.15 —— 修 CN.14 在真机 Stash 上打不开的三处 GraphQL（自研）
 
 **现象**（180 NAS，Stash v0.31.1 实机，CN.14 镜像）：单测 423 例全绿、CI 构建成功，

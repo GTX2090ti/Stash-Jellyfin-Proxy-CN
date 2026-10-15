@@ -655,3 +655,57 @@ async def endpoint_image(request):
             return _image_response(request, img_data, ct)
         from stash_jellyfin_proxy.util.images import placeholder_png
         return _image_response(request, placeholder_png(), 'image/png')
+
+
+async def endpoint_chapter_image(request):
+    """`GET /Items/{item_id}/Images/Chapter/{index}` — the thumbnail the
+    client draws beside a timeline chapter.
+
+    The chapter at `index` is a Stash marker, so the picture is the
+    screenshot Stash took when the marker was placed:
+    `/scene/{sceneId}/scene_marker/{markerId}/screenshot`. The index is
+    the position in the detail DTO's `Chapters[]`, which is ordered by
+    mapping.markers.chapter_markers — the same function picks the marker
+    here, so the two lists cannot drift.
+
+    Markerless scenes, out-of-range indexes, non-scene ids and any Stash
+    failure all answer 404: the client then falls back to the generic
+    chapter icon it uses for every server without chapter images.
+    """
+    item_id = request.path_params.get("item_id", "") or ""
+    try:
+        index = int(request.path_params.get("index", ""))
+    except (TypeError, ValueError):
+        return Response(status_code=404)
+
+    numeric_id = get_numeric_id(item_id)
+    if not numeric_id:
+        return Response(status_code=404)
+
+    from stash_jellyfin_proxy.mapping.markers import chapter_markers
+    from stash_jellyfin_proxy.stash.scene import get_scene_markers
+
+    scene = await get_scene_markers(numeric_id)
+    markers = chapter_markers(scene) if scene else []
+    if index < 0 or index >= len(markers):
+        return Response(status_code=404)
+
+    marker_id = markers[index].get("id")
+    if not marker_id:
+        return Response(status_code=404)
+
+    url = (
+        f"{runtime.STASH_URL.rstrip('/')}/scene/{numeric_id}"
+        f"/scene_marker/{marker_id}/screenshot"
+    )
+    headers = {"ApiKey": runtime.STASH_API_KEY} if runtime.STASH_API_KEY else {}
+    try:
+        data, content_type, _ = await fetch_from_stash(url, extra_headers=headers, timeout=15)
+    except Exception as e:
+        logger.debug(f"chapter screenshot fetch failed for {item_id}[{index}]: {e}")
+        return Response(status_code=404)
+
+    if not data or not (content_type or "").startswith("image/"):
+        return Response(status_code=404)
+    logger.debug(f"Serving chapter image {index} for {item_id} ({len(data)} bytes)")
+    return _image_response(request, data, content_type)

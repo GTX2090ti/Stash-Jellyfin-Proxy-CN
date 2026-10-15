@@ -317,7 +317,8 @@ def test_http_detail_dto_carries_chapters(client):
     r = client.get("/Items/scene-7")
     assert r.status_code == 200
     chapters = r.json()["Chapters"]
-    assert chapters == [{"StartPositionTicks": 5 * 10_000_000, "Name": "Intro"}]
+    assert chapters == [{"StartPositionTicks": 5 * 10_000_000, "Name": "Intro",
+                         "ImageTag": "m1s5"}]
 
 
 # --- paged-query GraphQL shape ------------------------------------------
